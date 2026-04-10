@@ -1,6 +1,7 @@
 #include <FL/Fl.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Widget.H>
+#include <FL/Fl_Box.H>
 #include <FL/fl_draw.H>
 #include <FL/Fl_RGB_Image.H>
 
@@ -21,6 +22,7 @@ namespace {
 constexpr int kPadding = 16;
 constexpr int kMinWindowW = 240;
 constexpr int kMinWindowH = 180;
+constexpr int kStatusBarH = 24;
 constexpr double kZoomStep = 1.10;
 constexpr double kZoomMin = 0.05;
 constexpr double kZoomMax = 40.0;
@@ -420,6 +422,30 @@ class ImageView : public Fl_Widget {
   std::function<void()> copy_cb_;
 };
 
+class AppWindow : public Fl_Double_Window {
+ public:
+  AppWindow(int W, int H, const char* L) : Fl_Double_Window(W, H, L) {}
+
+  void set_layout_widgets(ImageView* view, Fl_Box* status) {
+    view_ = view;
+    status_ = status;
+  }
+
+  void resize(int X, int Y, int W, int H) override {
+    Fl_Double_Window::resize(X, Y, W, H);
+    if (view_) {
+      view_->resize(0, 0, W, std::max(1, H - kStatusBarH));
+    }
+    if (status_) {
+      status_->resize(0, std::max(0, H - kStatusBarH), W, kStatusBarH);
+    }
+  }
+
+ private:
+  ImageView* view_ = nullptr;
+  Fl_Box* status_ = nullptr;
+};
+
 std::vector<std::string> discover_loaders(std::string& loader_dir) {
   namespace fs = std::filesystem;
   for (const char* dir : kLoaderDirs) {
@@ -587,6 +613,27 @@ bool copy_file_to_clipboard(const FileMetadata& meta) {
   return false;
 }
 
+std::string human_size(uintmax_t bytes) {
+  static const char* kUnits[] = {"B", "KiB", "MiB", "GiB", "TiB"};
+  double value = static_cast<double>(bytes);
+  size_t unit = 0;
+  while (value >= 1024.0 && unit < 4) {
+    value /= 1024.0;
+    ++unit;
+  }
+  char buf[64];
+  if (unit == 0) {
+    std::snprintf(buf, sizeof(buf), "%.0f %s", value, kUnits[unit]);
+  } else {
+    std::snprintf(buf, sizeof(buf), "%.1f %s", value, kUnits[unit]);
+  }
+  return std::string(buf);
+}
+
+std::string make_status_text(const FileMetadata& meta) {
+  return meta.path.filename().string() + " | " + meta.mime + " | " + human_size(meta.size_bytes);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -638,9 +685,19 @@ int main(int argc, char** argv) {
   const int win_h = std::clamp(wanted_h, kMinWindowH, static_cast<int>(sh * 0.9));
 
   const std::string title = make_title(current_file);
-  Fl_Double_Window win(win_w, win_h, title.c_str());
+  AppWindow win(win_w, win_h, title.c_str());
+  win.begin();
   win.color(fl_rgb_color(kBgR, kBgG, kBgB));
-  ImageView view(0, 0, win_w, win_h, std::move(loaded));
+  ImageView view(0, 0, win_w, std::max(1, win_h - kStatusBarH), std::move(loaded));
+  Fl_Box status(0, std::max(0, win_h - kStatusBarH), win_w, kStatusBarH);
+  win.set_layout_widgets(&view, &status);
+  status.box(FL_FLAT_BOX);
+  status.color(fl_rgb_color(20, 20, 20));
+  status.labelcolor(fl_rgb_color(230, 230, 230));
+  status.labelfont(FL_HELVETICA);
+  status.labelsize(13);
+  status.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
+  status.copy_label(make_status_text(current_meta).c_str());
   win.resizable(&view);
 
   view.set_navigate_callback([&](int dir) -> bool {
@@ -659,6 +716,7 @@ int main(int argc, char** argv) {
         current_meta = build_file_metadata(current_file);
         const std::string new_title = make_title(current_file);
         win.copy_label(new_title.c_str());
+        status.copy_label(make_status_text(current_meta).c_str());
         view.set_image(std::move(next));
         return true;
       }
