@@ -155,10 +155,17 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_KEYDOWN:
       case FL_SHORTCUT:
-        if (!(Fl::event_state() & FL_CTRL) && set_pan_key_state(Fl::event_key(), true)) {
-          pan_tick();
-          ensure_pan_timer();
-          return 1;
+        if (!(Fl::event_state() & FL_CTRL)) {
+          const int key = Fl::event_key();
+          const bool is_pan = is_pan_key(key);
+          const bool changed = set_pan_key_state(key, true);
+          if (is_pan) {
+            if (changed) {
+              pan_tick();
+              ensure_pan_timer();
+            }
+            return 1;  // swallow repeats; timer is the single pan driver
+          }
         }
         if (handle_copy_shortcut()) {
           return 1;
@@ -169,18 +176,17 @@ class ImageView : public Fl_Widget {
         if (handle_zoom_shortcuts()) {
           return 1;
         }
-        if (handle_pan_shortcuts()) {
-          return 1;
-        }
         break;
-      case FL_KEYUP:
-        if (set_pan_key_state(Fl::event_key(), false)) {
+      case FL_KEYUP: {
+        const bool changed = set_pan_key_state(Fl::event_key(), false);
+        if (changed) {
           if (!any_pan_key_pressed()) {
             stop_pan_timer();
           }
           return 1;
         }
         break;
+      }
       default:
         break;
     }
@@ -228,8 +234,16 @@ class ImageView : public Fl_Widget {
     else if (key == 'd' || key == 'D') slot = &pan_d_;
     else return false;
 
+    if (*slot == down) {
+      return false;
+    }
     *slot = down;
     return true;
+  }
+
+  static bool is_pan_key(int key) {
+    return key == 'w' || key == 'W' || key == 'a' || key == 'A' ||
+           key == 's' || key == 'S' || key == 'd' || key == 'D';
   }
 
   bool any_pan_key_pressed() const { return pan_w_ || pan_a_ || pan_s_ || pan_d_; }
@@ -390,31 +404,6 @@ class ImageView : public Fl_Widget {
       if (copy_cb_) {
         copy_cb_();
       }
-      return true;
-    }
-    return false;
-  }
-
-  bool handle_pan_shortcuts() {
-    if (Fl::event_state() & FL_CTRL) {
-      return false;
-    }
-
-    const int key = Fl::event_key();
-    if (key == 'w' || key == 'W') {
-      pan_view_by(0, -kPanStep);
-      return true;
-    }
-    if (key == 'a' || key == 'A') {
-      pan_view_by(-kPanStep, 0);
-      return true;
-    }
-    if (key == 's' || key == 'S') {
-      pan_view_by(0, kPanStep);
-      return true;
-    }
-    if (key == 'd' || key == 'D') {
-      pan_view_by(kPanStep, 0);
       return true;
     }
     return false;
