@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=fliv
+GenericName=Image Viewer
+Comment=Simple FLTK image viewer powered by imlib2
+Exec=fliv %F
+Icon=fliv
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/bmp;image/gif;image/heic;image/heif;image/avif;image/vnd.ms-photo;image/x-icon;image/jp2;image/jpeg;image/jxl;image/png;image/x-portable-anymap;image/x-tga;image/tiff;image/webp;image/x-xbitmap;image/x-xpixmap;image/svg+xml;
+StartupNotify=false

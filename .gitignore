@@ -1,0 +1,6 @@
+pkg/
+src/
+reference/
+*.zst
+.codex
+fliv
