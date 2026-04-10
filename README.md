@@ -34,7 +34,8 @@ make
 - Left-click drag: pan image by dragging
 - Pan is edge-restricted (no movement past image bounds).
 - Zoom rendering is viewport-based (only visible pixels are sampled/rendered).
-- No file navigation yet.
+- `Left` / `Right`: previous/next decodable file in the current directory.
+- Unsupported/unreadable files are skipped automatically.
 
 ## Format support
 

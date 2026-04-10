@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -90,8 +91,18 @@ bool load_image_rgb(const char* path, LoadedImage& out, std::string& err_out) {
 
 class ImageView : public Fl_Widget {
  public:
-  ImageView(int X, int Y, int W, int H, const unsigned char* src_pixels, int src_w, int src_h)
-      : Fl_Widget(X, Y, W, H), src_pixels_(src_pixels), src_w_(src_w), src_h_(src_h) {}
+  ImageView(int X, int Y, int W, int H, LoadedImage image)
+      : Fl_Widget(X, Y, W, H), image_(std::move(image)) {
+    sync_image_pointers();
+  }
+
+  void set_navigate_callback(std::function<bool(int)> cb) { navigate_cb_ = std::move(cb); }
+
+  void set_image(LoadedImage image) {
+    image_ = std::move(image);
+    sync_image_pointers();
+    reset_zoom();
+  }
 
   int handle(int event) override {
     switch (event) {
@@ -131,6 +142,9 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_KEYDOWN:
       case FL_SHORTCUT:
+        if (handle_navigation_shortcuts()) {
+          return 1;
+        }
         if (handle_zoom_shortcuts()) {
           return 1;
         }
@@ -268,6 +282,17 @@ class ImageView : public Fl_Widget {
     return false;
   }
 
+  bool handle_navigation_shortcuts() {
+    const int key = Fl::event_key();
+    if (key == FL_Left) {
+      return navigate_cb_ ? navigate_cb_(-1) : false;
+    }
+    if (key == FL_Right) {
+      return navigate_cb_ ? navigate_cb_(1) : false;
+    }
+    return false;
+  }
+
   bool handle_pan_shortcuts() {
     if (Fl::event_state() & FL_CTRL) {
       return false;
@@ -345,6 +370,14 @@ class ImageView : public Fl_Widget {
     redraw();
   }
 
+  void sync_image_pointers() {
+    src_pixels_ = image_.rgb.data();
+    src_w_ = image_.w;
+    src_h_ = image_.h;
+    scaled_view_.clear();
+  }
+
+  LoadedImage image_;
   const unsigned char* src_pixels_ = nullptr;
   int src_w_ = 0;
   int src_h_ = 0;
@@ -355,6 +388,7 @@ class ImageView : public Fl_Widget {
   int drag_last_x_ = 0;
   int drag_last_y_ = 0;
   double zoom_ = 1.0;  // Relative to fit-to-window scale.
+  std::function<bool(int)> navigate_cb_;
 };
 
 std::vector<std::string> discover_loaders(std::string& loader_dir) {
@@ -424,6 +458,26 @@ void print_usage(const char* argv0) {
   std::fprintf(stderr, "       %s --list-formats\n", argv0);
 }
 
+std::string make_title(const std::filesystem::path& file) {
+  return "fliv - " + file.filename().string();
+}
+
+std::vector<std::filesystem::path> list_directory_files(const std::filesystem::path& dir) {
+  namespace fs = std::filesystem;
+  std::vector<fs::path> out;
+  std::error_code ec;
+  for (const auto& entry : fs::directory_iterator(dir, ec)) {
+    if (ec || !entry.is_regular_file()) {
+      continue;
+    }
+    out.push_back(entry.path());
+  }
+  std::sort(out.begin(), out.end(), [](const fs::path& a, const fs::path& b) {
+    return a.filename().string() < b.filename().string();
+  });
+  return out;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -441,13 +495,26 @@ int main(int argc, char** argv) {
   constexpr unsigned char kBgG = 30;
   constexpr unsigned char kBgB = 30;
 
-  LoadedImage loaded;
-  std::string load_err;
-  if (!load_image_rgb(argv[1], loaded, load_err)) {
-    std::fprintf(stderr, "Failed to load image: %s (%s)\n", argv[1], load_err.c_str());
-    return 2;
+  namespace fs = std::filesystem;
+  fs::path current_file = fs::absolute(fs::path(argv[1])).lexically_normal();
+  fs::path current_dir = current_file.parent_path();
+  std::vector<fs::path> dir_files = list_directory_files(current_dir);
+
+  size_t current_index = 0;
+  for (size_t i = 0; i < dir_files.size(); ++i) {
+    if (fs::absolute(dir_files[i]).lexically_normal() == current_file) {
+      current_index = i;
+      break;
+    }
   }
 
+  LoadedImage loaded;
+  std::string load_err;
+  if (!load_image_rgb(current_file.string().c_str(), loaded, load_err)) {
+    std::fprintf(stderr, "Failed to load image: %s (%s)\n", current_file.string().c_str(), load_err.c_str());
+    return 2;
+  }
+ 
   int sx = 0;
   int sy = 0;
   int sw = 0;
@@ -460,10 +527,33 @@ int main(int argc, char** argv) {
   const int win_w = std::clamp(wanted_w, kMinWindowW, static_cast<int>(sw * 0.9));
   const int win_h = std::clamp(wanted_h, kMinWindowH, static_cast<int>(sh * 0.9));
 
-  Fl_Double_Window win(win_w, win_h, "fliv - stage 1");
+  const std::string title = make_title(current_file);
+  Fl_Double_Window win(win_w, win_h, title.c_str());
   win.color(fl_rgb_color(kBgR, kBgG, kBgB));
-  ImageView view(0, 0, win_w, win_h, loaded.rgb.data(), loaded.w, loaded.h);
+  ImageView view(0, 0, win_w, win_h, std::move(loaded));
   win.resizable(&view);
+
+  view.set_navigate_callback([&](int dir) -> bool {
+    if (dir_files.empty()) {
+      return false;
+    }
+
+    for (int i = static_cast<int>(current_index) + dir;
+         i >= 0 && i < static_cast<int>(dir_files.size()); i += dir) {
+      LoadedImage next;
+      std::string err;
+      const std::string candidate = dir_files[static_cast<size_t>(i)].string();
+      if (load_image_rgb(candidate.c_str(), next, err)) {
+        current_index = static_cast<size_t>(i);
+        current_file = fs::absolute(dir_files[current_index]).lexically_normal();
+        const std::string new_title = make_title(current_file);
+        win.copy_label(new_title.c_str());
+        view.set_image(std::move(next));
+        return true;
+      }
+    }
+    return false;
+  });
 
   win.end();
   win.show();
