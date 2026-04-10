@@ -9,6 +9,8 @@ depends=('fltk' 'imlib2')
 optdepends=(
     'wl-clipboard: copy image to clipboard on Wayland (wl-copy)'
     'xclip: copy image to clipboard on X11'
+    'gimp: open current image with g/Ctrl+G'
+    'inkscape: open current image with i/Ctrl+I'
 )
 makedepends=('gcc')
 source=("main.cpp" "Makefile" "fliv.desktop" "icon-fliv.png")

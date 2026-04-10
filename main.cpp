@@ -110,6 +110,8 @@ class ImageView : public Fl_Widget {
 
   void set_navigate_callback(std::function<bool(int)> cb) { navigate_cb_ = std::move(cb); }
   void set_copy_callback(std::function<void()> cb) { copy_cb_ = std::move(cb); }
+  void set_open_gimp_callback(std::function<void()> cb) { open_gimp_cb_ = std::move(cb); }
+  void set_open_inkscape_callback(std::function<void()> cb) { open_inkscape_cb_ = std::move(cb); }
 
   void set_image(LoadedImage image) {
     image_ = std::move(image);
@@ -157,6 +159,9 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_KEYDOWN:
       case FL_SHORTCUT:
+        if (handle_external_open_shortcuts()) {
+          return 1;
+        }
         if (!(Fl::event_state() & FL_CTRL)) {
           const int key = Fl::event_key();
           const bool is_pan = is_pan_key(key);
@@ -411,6 +416,29 @@ class ImageView : public Fl_Widget {
     return false;
   }
 
+  bool handle_external_open_shortcuts() {
+    const int key = Fl::event_key();
+    const bool ctrl = (Fl::event_state() & FL_CTRL) != 0;
+
+    const bool gimp_key = (key == 'g' || key == 'G' || (ctrl && key == ('g' & 0x1f)));
+    if (gimp_key) {
+      if (open_gimp_cb_) {
+        open_gimp_cb_();
+      }
+      return true;
+    }
+
+    const bool inkscape_key = (key == 'i' || key == 'I' || (ctrl && key == ('i' & 0x1f)));
+    if (inkscape_key) {
+      if (open_inkscape_cb_) {
+        open_inkscape_cb_();
+      }
+      return true;
+    }
+
+    return false;
+  }
+
   void pan_view_by(int dx, int dy) {
     const int old_x = img_x_;
     const int old_y = img_y_;
@@ -488,6 +516,8 @@ class ImageView : public Fl_Widget {
   bool pan_timer_active_ = false;
   std::function<bool(int)> navigate_cb_;
   std::function<void()> copy_cb_;
+  std::function<void()> open_gimp_cb_;
+  std::function<void()> open_inkscape_cb_;
 };
 
 class AppWindow : public Fl_Double_Window {
@@ -681,6 +711,17 @@ bool copy_file_to_clipboard(const FileMetadata& meta) {
   return false;
 }
 
+bool launch_app_if_available(const char* app, const std::filesystem::path& file) {
+  if (!command_exists(app)) {
+    return false;
+  }
+  const std::string cmd =
+      std::string(app) + " " + shell_quote(file.string()) + " >/dev/null 2>&1 &";
+  const int rc = std::system(cmd.c_str());
+  (void)rc;
+  return true;
+}
+
 std::string human_size(uintmax_t bytes) {
   static const char* kUnits[] = {"B", "KiB", "MiB", "GiB", "TiB"};
   double value = static_cast<double>(bytes);
@@ -805,6 +846,9 @@ int main(int argc, char** argv) {
                    current_meta.path.string().c_str());
     }
   });
+  view.set_open_gimp_callback([&]() { (void)launch_app_if_available("gimp", current_meta.path); });
+  view.set_open_inkscape_callback(
+      [&]() { (void)launch_app_if_available("inkscape", current_meta.path); });
 
   win.end();
   win.show();
