@@ -26,7 +26,8 @@ constexpr int kStatusBarH = 24;
 constexpr double kZoomStep = 1.10;
 constexpr double kZoomMin = 0.05;
 constexpr double kZoomMax = 40.0;
-constexpr int kPanStep = 48;
+constexpr int kPanStep = 24;
+constexpr double kPanTickSeconds = 1.0 / 30.0;
 constexpr const char* kLoaderDirs[] = {
     "/usr/lib/imlib2/loaders",
     "/usr/lib64/imlib2/loaders",
@@ -117,7 +118,9 @@ class ImageView : public Fl_Widget {
   int handle(int event) override {
     switch (event) {
       case FL_FOCUS:
+        return 1;
       case FL_UNFOCUS:
+        clear_pan_keys();
         return 1;
       case FL_PUSH:
         take_focus();
@@ -152,6 +155,11 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_KEYDOWN:
       case FL_SHORTCUT:
+        if (!(Fl::event_state() & FL_CTRL) && set_pan_key_state(Fl::event_key(), true)) {
+          pan_tick();
+          ensure_pan_timer();
+          return 1;
+        }
         if (handle_copy_shortcut()) {
           return 1;
         }
@@ -162,6 +170,14 @@ class ImageView : public Fl_Widget {
           return 1;
         }
         if (handle_pan_shortcuts()) {
+          return 1;
+        }
+        break;
+      case FL_KEYUP:
+        if (set_pan_key_state(Fl::event_key(), false)) {
+          if (!any_pan_key_pressed()) {
+            stop_pan_timer();
+          }
           return 1;
         }
         break;
@@ -191,9 +207,65 @@ class ImageView : public Fl_Widget {
     fl_pop_clip();
   }
 
-  ~ImageView() override = default;
+  ~ImageView() override { stop_pan_timer(); }
 
  private:
+  static void pan_timer_cb(void* userdata) {
+    auto* self = static_cast<ImageView*>(userdata);
+    self->pan_tick();
+    if (self->any_pan_key_pressed()) {
+      Fl::repeat_timeout(kPanTickSeconds, pan_timer_cb, userdata);
+    } else {
+      self->pan_timer_active_ = false;
+    }
+  }
+
+  bool set_pan_key_state(int key, bool down) {
+    bool* slot = nullptr;
+    if (key == 'w' || key == 'W') slot = &pan_w_;
+    else if (key == 'a' || key == 'A') slot = &pan_a_;
+    else if (key == 's' || key == 'S') slot = &pan_s_;
+    else if (key == 'd' || key == 'D') slot = &pan_d_;
+    else return false;
+
+    *slot = down;
+    return true;
+  }
+
+  bool any_pan_key_pressed() const { return pan_w_ || pan_a_ || pan_s_ || pan_d_; }
+
+  void clear_pan_keys() {
+    pan_w_ = pan_a_ = pan_s_ = pan_d_ = false;
+    stop_pan_timer();
+  }
+
+  void ensure_pan_timer() {
+    if (!pan_timer_active_) {
+      pan_timer_active_ = true;
+      Fl::add_timeout(kPanTickSeconds, pan_timer_cb, this);
+    }
+  }
+
+  void stop_pan_timer() {
+    if (pan_timer_active_) {
+      Fl::remove_timeout(pan_timer_cb, this);
+      pan_timer_active_ = false;
+    }
+  }
+
+  void pan_tick() {
+    const int vx = (pan_d_ ? 1 : 0) - (pan_a_ ? 1 : 0);
+    const int vy = (pan_s_ ? 1 : 0) - (pan_w_ ? 1 : 0);
+    if (vx == 0 && vy == 0) {
+      return;
+    }
+
+    const double len = std::sqrt(static_cast<double>(vx * vx + vy * vy));
+    const int dx = static_cast<int>(std::lround(static_cast<double>(kPanStep) * vx / len));
+    const int dy = static_cast<int>(std::lround(static_cast<double>(kPanStep) * vy / len));
+    pan_view_by(dx, dy);
+  }
+
   int viewport_x() const { return x() + kPadding; }
   int viewport_y() const { return y() + kPadding; }
   int viewport_w() const { return std::max(1, w() - 2 * kPadding); }
@@ -418,6 +490,11 @@ class ImageView : public Fl_Widget {
   int drag_last_x_ = 0;
   int drag_last_y_ = 0;
   double zoom_ = 1.0;  // Relative to fit-to-window scale.
+  bool pan_w_ = false;
+  bool pan_a_ = false;
+  bool pan_s_ = false;
+  bool pan_d_ = false;
+  bool pan_timer_active_ = false;
   std::function<bool(int)> navigate_cb_;
   std::function<void()> copy_cb_;
 };

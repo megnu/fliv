@@ -31,6 +31,7 @@ make
 - `Ctrl` + `0`: reset zoom
 - Mouse wheel: zoom in/out
 - `W` / `A` / `S` / `D`: pan up / left / down / right
+- WASD combinations pan diagonally (normalized speed).
 - Left-click drag: pan image by dragging
 - Pan is edge-restricted (no movement past image bounds).
 - Zoom rendering is viewport-based (only visible pixels are sampled/rendered).
