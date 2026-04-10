@@ -21,7 +21,7 @@ make
 ## Current behavior
 
 - Loads one image using imlib2.
-- Opens a fixed-size FLTK window.
+- Opens a resizable FLTK window.
 - Draws the image centered with padding and a simple frame.
 - Scales down to fit the window if needed.
 - Transparency is composited onto a checkerboard background.
@@ -30,7 +30,11 @@ make
 - `Ctrl` + `-`: zoom out
 - `Ctrl` + `0`: reset zoom
 - Mouse wheel: zoom in/out
-- No pan or file navigation yet.
+- `W` / `A` / `S` / `D`: pan up / left / down / right
+- Left-click drag: pan image by dragging
+- Pan is edge-restricted (no movement past image bounds).
+- Zoom rendering is viewport-based (only visible pixels are sampled/rendered).
+- No file navigation yet.
 
 ## Format support
 

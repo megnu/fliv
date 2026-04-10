@@ -7,6 +7,7 @@
 #include <Imlib2.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <set>
@@ -21,6 +22,7 @@ constexpr int kMinWindowH = 180;
 constexpr double kZoomStep = 1.10;
 constexpr double kZoomMin = 0.05;
 constexpr double kZoomMax = 40.0;
+constexpr int kPanStep = 48;
 constexpr const char* kLoaderDirs[] = {
     "/usr/lib/imlib2/loaders",
     "/usr/lib64/imlib2/loaders",
@@ -88,8 +90,8 @@ bool load_image_rgb(const char* path, LoadedImage& out, std::string& err_out) {
 
 class ImageView : public Fl_Widget {
  public:
-  ImageView(int X, int Y, int W, int H, Fl_RGB_Image* src)
-      : Fl_Widget(X, Y, W, H), src_(src) {}
+  ImageView(int X, int Y, int W, int H, const unsigned char* src_pixels, int src_w, int src_h)
+      : Fl_Widget(X, Y, W, H), src_pixels_(src_pixels), src_w_(src_w), src_h_(src_h) {}
 
   int handle(int event) override {
     switch (event) {
@@ -98,7 +100,28 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_PUSH:
         take_focus();
+        if (Fl::event_button() == FL_LEFT_MOUSE) {
+          dragging_ = true;
+          drag_last_x_ = Fl::event_x();
+          drag_last_y_ = Fl::event_y();
+        }
         return 1;
+      case FL_DRAG:
+        if (dragging_) {
+          const int nx = Fl::event_x();
+          const int ny = Fl::event_y();
+          pan_image_by(nx - drag_last_x_, ny - drag_last_y_);
+          drag_last_x_ = nx;
+          drag_last_y_ = ny;
+          return 1;
+        }
+        break;
+      case FL_RELEASE:
+        if (dragging_ && Fl::event_button() == FL_LEFT_MOUSE) {
+          dragging_ = false;
+          return 1;
+        }
+        break;
       case FL_MOUSEWHEEL:
         if (Fl::event_dy() < 0) {
           zoom_by(kZoomStep, Fl::event_x() - viewport_x(), Fl::event_y() - viewport_y());
@@ -109,6 +132,9 @@ class ImageView : public Fl_Widget {
       case FL_KEYDOWN:
       case FL_SHORTCUT:
         if (handle_zoom_shortcuts()) {
+          return 1;
+        }
+        if (handle_pan_shortcuts()) {
           return 1;
         }
         break;
@@ -127,21 +153,18 @@ class ImageView : public Fl_Widget {
     const int draw_w = scaled_w();
     const int draw_h = scaled_h();
     clamp_offsets();
-    ensure_scaled_image(draw_w, draw_h);
 
     const int draw_x = viewport_x() + img_x_;
     const int draw_y = viewport_y() + img_y_;
     fl_color(fl_rgb_color(12, 12, 12));
     fl_rectf(draw_x - 1, draw_y - 1, draw_w + 2, draw_h + 2);
 
-    if (scaled_) {
-      scaled_->draw(draw_x, draw_y);
-    }
+    draw_visible_region();
 
     fl_pop_clip();
   }
 
-  ~ImageView() override { delete scaled_; }
+  ~ImageView() override = default;
 
  private:
   int viewport_x() const { return x() + kPadding; }
@@ -150,15 +173,15 @@ class ImageView : public Fl_Widget {
   int viewport_h() const { return std::max(1, h() - 2 * kPadding); }
 
   double fit_scale() const {
-    const double sx = static_cast<double>(viewport_w()) / static_cast<double>(src_->w());
-    const double sy = static_cast<double>(viewport_h()) / static_cast<double>(src_->h());
+    const double sx = static_cast<double>(viewport_w()) / static_cast<double>(src_w_);
+    const double sy = static_cast<double>(viewport_h()) / static_cast<double>(src_h_);
     return std::min(1.0, std::min(sx, sy));
   }
 
   double current_scale() const { return std::clamp(fit_scale() * zoom_, kZoomMin, kZoomMax); }
 
-  int scaled_w() const { return std::max(1, static_cast<int>(src_->w() * current_scale())); }
-  int scaled_h() const { return std::max(1, static_cast<int>(src_->h() * current_scale())); }
+  int scaled_w() const { return std::max(1, static_cast<int>(src_w_ * current_scale())); }
+  int scaled_h() const { return std::max(1, static_cast<int>(src_h_ * current_scale())); }
 
   void clamp_offsets() {
     const int sw = scaled_w();
@@ -181,14 +204,47 @@ class ImageView : public Fl_Widget {
     }
   }
 
-  void ensure_scaled_image(int w, int h) {
-    if (scaled_ && scaled_w_ == w && scaled_h_ == h) {
+  void draw_visible_region() {
+    const int vw = viewport_w();
+    const int vh = viewport_h();
+    const int sw = scaled_w();
+    const int sh = scaled_h();
+    const double scale = current_scale();
+
+    const int vis_x0 = std::max(0, img_x_);
+    const int vis_y0 = std::max(0, img_y_);
+    const int vis_x1 = std::min(vw, img_x_ + sw);
+    const int vis_y1 = std::min(vh, img_y_ + sh);
+    if (vis_x1 <= vis_x0 || vis_y1 <= vis_y0) {
       return;
     }
-    delete scaled_;
-    scaled_ = static_cast<Fl_RGB_Image*>(src_->copy(w, h));
-    scaled_w_ = w;
-    scaled_h_ = h;
+
+    const int out_w = vis_x1 - vis_x0;
+    const int out_h = vis_y1 - vis_y0;
+    const size_t need = static_cast<size_t>(out_w) * static_cast<size_t>(out_h) * 3u;
+    if (scaled_view_.size() != need) {
+      scaled_view_.resize(need);
+    }
+
+    // Nearest-neighbor sampling for zoom/pan. Cost scales with viewport size, not zoomed image size.
+    for (int y = 0; y < out_h; ++y) {
+      const int vy = vis_y0 + y;
+      int sy = static_cast<int>(std::floor((vy - img_y_) / scale));
+      sy = std::clamp(sy, 0, src_h_ - 1);
+      for (int x = 0; x < out_w; ++x) {
+        const int vx = vis_x0 + x;
+        int sx = static_cast<int>(std::floor((vx - img_x_) / scale));
+        sx = std::clamp(sx, 0, src_w_ - 1);
+
+        const size_t si = (static_cast<size_t>(sy) * static_cast<size_t>(src_w_) + static_cast<size_t>(sx)) * 3u;
+        const size_t di = (static_cast<size_t>(y) * static_cast<size_t>(out_w) + static_cast<size_t>(x)) * 3u;
+        scaled_view_[di + 0] = src_pixels_[si + 0];
+        scaled_view_[di + 1] = src_pixels_[si + 1];
+        scaled_view_[di + 2] = src_pixels_[si + 2];
+      }
+    }
+
+    fl_draw_image(scaled_view_.data(), viewport_x() + vis_x0, viewport_y() + vis_y0, out_w, out_h, 3);
   }
 
   bool handle_zoom_shortcuts() {
@@ -210,6 +266,53 @@ class ImageView : public Fl_Widget {
       return true;
     }
     return false;
+  }
+
+  bool handle_pan_shortcuts() {
+    if (Fl::event_state() & FL_CTRL) {
+      return false;
+    }
+
+    const int key = Fl::event_key();
+    if (key == 'w' || key == 'W') {
+      pan_view_by(0, -kPanStep);
+      return true;
+    }
+    if (key == 'a' || key == 'A') {
+      pan_view_by(-kPanStep, 0);
+      return true;
+    }
+    if (key == 's' || key == 'S') {
+      pan_view_by(0, kPanStep);
+      return true;
+    }
+    if (key == 'd' || key == 'D') {
+      pan_view_by(kPanStep, 0);
+      return true;
+    }
+    return false;
+  }
+
+  void pan_view_by(int dx, int dy) {
+    const int old_x = img_x_;
+    const int old_y = img_y_;
+    img_x_ -= dx;
+    img_y_ -= dy;
+    clamp_offsets();
+    if (img_x_ != old_x || img_y_ != old_y) {
+      redraw();
+    }
+  }
+
+  void pan_image_by(int dx, int dy) {
+    const int old_x = img_x_;
+    const int old_y = img_y_;
+    img_x_ += dx;
+    img_y_ += dy;
+    clamp_offsets();
+    if (img_x_ != old_x || img_y_ != old_y) {
+      redraw();
+    }
   }
 
   void zoom_by(double factor, int anchor_x, int anchor_y) {
@@ -242,12 +345,15 @@ class ImageView : public Fl_Widget {
     redraw();
   }
 
-  Fl_RGB_Image* src_ = nullptr;
-  Fl_RGB_Image* scaled_ = nullptr;
-  int scaled_w_ = 0;
-  int scaled_h_ = 0;
+  const unsigned char* src_pixels_ = nullptr;
+  int src_w_ = 0;
+  int src_h_ = 0;
+  std::vector<unsigned char> scaled_view_;
   int img_x_ = 0;
   int img_y_ = 0;
+  bool dragging_ = false;
+  int drag_last_x_ = 0;
+  int drag_last_y_ = 0;
   double zoom_ = 1.0;  // Relative to fit-to-window scale.
 };
 
@@ -342,16 +448,6 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  auto* src = new Fl_RGB_Image(loaded.rgb.data(), loaded.w, loaded.h, 3);
-  if (!src || !src->data()[0]) {
-    std::fprintf(stderr, "Failed to build FLTK image\n");
-    delete src;
-    return 3;
-  }
-
-  // Data is owned by `loaded.rgb`; do not let FLTK free it.
-  src->alloc_array = 0;
-
   int sx = 0;
   int sy = 0;
   int sw = 0;
@@ -366,7 +462,7 @@ int main(int argc, char** argv) {
 
   Fl_Double_Window win(win_w, win_h, "fliv - stage 1");
   win.color(fl_rgb_color(kBgR, kBgG, kBgB));
-  ImageView view(0, 0, win_w, win_h, src);
+  ImageView view(0, 0, win_w, win_h, loaded.rgb.data(), loaded.w, loaded.h);
   win.resizable(&view);
 
   win.end();
@@ -374,6 +470,5 @@ int main(int argc, char** argv) {
   Fl::focus(&view);
   const int rc = Fl::run();
 
-  delete src;
   return rc;
 }
