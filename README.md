@@ -38,7 +38,7 @@ make
 - `Left` / `Right`: previous/next decodable file in the current directory.
 - Unsupported/unreadable files are skipped automatically.
 - `c` or `Ctrl+C`: copy current image file to clipboard (`wl-copy` on Wayland, `xclip` on X11).
-- Bottom status bar shows: filename, mime type, and human-readable file size.
+- Bottom status bar shows: filename, mime type, human-readable file size, and dimensions.
 
 ## Format support
 

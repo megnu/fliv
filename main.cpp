@@ -45,6 +45,8 @@ struct FileMetadata {
   std::filesystem::path path;
   std::string mime;
   uintmax_t size_bytes = 0;
+  int width = 0;
+  int height = 0;
 };
 
 bool load_image_rgb(const char* path, LoadedImage& out, std::string& err_out) {
@@ -697,7 +699,9 @@ std::string human_size(uintmax_t bytes) {
 }
 
 std::string make_status_text(const FileMetadata& meta) {
-  return meta.path.filename().string() + " | " + meta.mime + " | " + human_size(meta.size_bytes);
+  return meta.path.filename().string() + " | " + meta.mime + " | " +
+         human_size(meta.size_bytes) + " | " +
+         std::to_string(meta.width) + "x" + std::to_string(meta.height);
 }
 
 }  // namespace
@@ -737,6 +741,8 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "Failed to load image: %s (%s)\n", current_file.string().c_str(), load_err.c_str());
     return 2;
   }
+  current_meta.width = loaded.w;
+  current_meta.height = loaded.h;
  
   int sx = 0;
   int sy = 0;
@@ -780,6 +786,8 @@ int main(int argc, char** argv) {
         current_index = static_cast<size_t>(i);
         current_file = fs::absolute(dir_files[current_index]).lexically_normal();
         current_meta = build_file_metadata(current_file);
+        current_meta.width = next.w;
+        current_meta.height = next.h;
         const std::string new_title = make_title(current_file);
         win.copy_label(new_title.c_str());
         status.copy_label(make_status_text(current_meta).c_str());
