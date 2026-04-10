@@ -36,6 +36,7 @@ make
 - Zoom rendering is viewport-based (only visible pixels are sampled/rendered).
 - `Left` / `Right`: previous/next decodable file in the current directory.
 - Unsupported/unreadable files are skipped automatically.
+- `c` or `Ctrl+C`: copy current image file to clipboard (`wl-copy` on Wayland, `xclip` on X11).
 
 ## Format support
 

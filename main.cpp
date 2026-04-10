@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
@@ -35,6 +36,12 @@ struct LoadedImage {
   int w = 0;
   int h = 0;
   std::vector<unsigned char> rgb;
+};
+
+struct FileMetadata {
+  std::filesystem::path path;
+  std::string mime;
+  uintmax_t size_bytes = 0;
 };
 
 bool load_image_rgb(const char* path, LoadedImage& out, std::string& err_out) {
@@ -97,6 +104,7 @@ class ImageView : public Fl_Widget {
   }
 
   void set_navigate_callback(std::function<bool(int)> cb) { navigate_cb_ = std::move(cb); }
+  void set_copy_callback(std::function<void()> cb) { copy_cb_ = std::move(cb); }
 
   void set_image(LoadedImage image) {
     image_ = std::move(image);
@@ -142,6 +150,9 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_KEYDOWN:
       case FL_SHORTCUT:
+        if (handle_copy_shortcut()) {
+          return 1;
+        }
         if (handle_navigation_shortcuts()) {
           return 1;
         }
@@ -293,6 +304,23 @@ class ImageView : public Fl_Widget {
     return false;
   }
 
+  bool handle_copy_shortcut() {
+    const int key = Fl::event_key();
+    if (key == 'c' || key == 'C') {
+      if (copy_cb_) {
+        copy_cb_();
+      }
+      return true;
+    }
+    if ((Fl::event_state() & FL_CTRL) && key == 3) {  // Ctrl+C (ETX)
+      if (copy_cb_) {
+        copy_cb_();
+      }
+      return true;
+    }
+    return false;
+  }
+
   bool handle_pan_shortcuts() {
     if (Fl::event_state() & FL_CTRL) {
       return false;
@@ -389,6 +417,7 @@ class ImageView : public Fl_Widget {
   int drag_last_y_ = 0;
   double zoom_ = 1.0;  // Relative to fit-to-window scale.
   std::function<bool(int)> navigate_cb_;
+  std::function<void()> copy_cb_;
 };
 
 std::vector<std::string> discover_loaders(std::string& loader_dir) {
@@ -478,6 +507,86 @@ std::vector<std::filesystem::path> list_directory_files(const std::filesystem::p
   return out;
 }
 
+std::string shell_quote(const std::string& s) {
+  std::string out = "'";
+  for (char c : s) {
+    if (c == '\'') {
+      out += "'\\''";
+    } else {
+      out += c;
+    }
+  }
+  out += "'";
+  return out;
+}
+
+bool command_exists(const char* cmd) {
+  const std::string probe = std::string("command -v ") + cmd + " >/dev/null 2>&1";
+  return std::system(probe.c_str()) == 0;
+}
+
+std::string to_lower(std::string s) {
+  for (char& c : s) {
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+  }
+  return s;
+}
+
+std::string guess_mime_type(const std::filesystem::path& p) {
+  const std::string ext = to_lower(p.extension().string());
+  if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+  if (ext == ".png") return "image/png";
+  if (ext == ".gif") return "image/gif";
+  if (ext == ".bmp") return "image/bmp";
+  if (ext == ".webp") return "image/webp";
+  if (ext == ".tif" || ext == ".tiff") return "image/tiff";
+  if (ext == ".svg") return "image/svg+xml";
+  if (ext == ".avif") return "image/avif";
+  if (ext == ".heif") return "image/heif";
+  if (ext == ".heic") return "image/heic";
+  if (ext == ".jxl") return "image/jxl";
+  if (ext == ".jp2" || ext == ".j2k") return "image/jp2";
+  if (ext == ".ico") return "image/x-icon";
+  if (ext == ".xbm") return "image/x-xbitmap";
+  if (ext == ".xpm") return "image/x-xpixmap";
+  if (ext == ".pnm") return "image/x-portable-anymap";
+  if (ext == ".pbm") return "image/x-portable-bitmap";
+  if (ext == ".pgm") return "image/x-portable-graymap";
+  if (ext == ".ppm") return "image/x-portable-pixmap";
+  if (ext == ".tga") return "image/x-tga";
+  if (ext == ".qoi") return "image/qoi";
+  return "application/octet-stream";
+}
+
+FileMetadata build_file_metadata(const std::filesystem::path& file) {
+  FileMetadata meta;
+  meta.path = file;
+  meta.mime = guess_mime_type(file);
+  std::error_code ec;
+  meta.size_bytes = std::filesystem::file_size(file, ec);
+  if (ec) {
+    meta.size_bytes = 0;
+  }
+  return meta;
+}
+
+bool copy_file_to_clipboard(const FileMetadata& meta) {
+  const std::string fq = shell_quote(meta.path.string());
+  const std::string mq = shell_quote(meta.mime);
+
+  if (std::getenv("WAYLAND_DISPLAY") && command_exists("wl-copy")) {
+    const std::string cmd = "wl-copy --type " + mq + " < " + fq;
+    return std::system(cmd.c_str()) == 0;
+  }
+  if (command_exists("xclip")) {
+    const std::string cmd = "xclip -selection clipboard -t " + mq + " -i " + fq;
+    return std::system(cmd.c_str()) == 0;
+  }
+  return false;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -498,6 +607,7 @@ int main(int argc, char** argv) {
   namespace fs = std::filesystem;
   fs::path current_file = fs::absolute(fs::path(argv[1])).lexically_normal();
   fs::path current_dir = current_file.parent_path();
+  FileMetadata current_meta = build_file_metadata(current_file);
   std::vector<fs::path> dir_files = list_directory_files(current_dir);
 
   size_t current_index = 0;
@@ -546,6 +656,7 @@ int main(int argc, char** argv) {
       if (load_image_rgb(candidate.c_str(), next, err)) {
         current_index = static_cast<size_t>(i);
         current_file = fs::absolute(dir_files[current_index]).lexically_normal();
+        current_meta = build_file_metadata(current_file);
         const std::string new_title = make_title(current_file);
         win.copy_label(new_title.c_str());
         view.set_image(std::move(next));
@@ -553,6 +664,14 @@ int main(int argc, char** argv) {
       }
     }
     return false;
+  });
+
+  view.set_copy_callback([&]() {
+    if (!copy_file_to_clipboard(current_meta)) {
+      std::fprintf(stderr,
+                   "Copy failed for %s (need wl-copy on Wayland or xclip on X11)\n",
+                   current_meta.path.string().c_str());
+    }
   });
 
   win.end();
