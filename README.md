@@ -39,6 +39,7 @@ make
 - `-` or `Ctrl` + `-`: zoom out
 - `0` or `Ctrl` + `0`: reset zoom
 - `f` or `Ctrl` + `f`: fit image to window
+- `F11`: toggle fullscreen
 - Mouse wheel: zoom in/out
 - `W` / `A` / `S` / `D`: pan up / left / down / right
 - WASD combinations pan diagonally.
@@ -52,9 +53,9 @@ make
 - `c` or `Ctrl+C`: copy current image file to clipboard (`wl-copy` on Wayland, `xclip` on X11).
 - `g` or `Ctrl+G`: open current image in GIMP (if installed).
 - `i` or `Ctrl+I`: open current image in Inkscape (if installed).
-- `Esc`: quit.
+- `Esc`: exit fullscreen first (if active), otherwise quit.
 - Program can start with no input image; empty state shows an open hint and accepts open shortcut/menu.
-- Right-click menu: Copy, Reload, Previous/Next File, Zoom In/Out/Reset, Fit to Window, Open Image, Open with GIMP, Open with Inkscape.
+- Right-click menu: Copy, Reload, Previous/Next File, Zoom In/Out/Reset, Fit to Window, Toggle Fullscreen, Open Image, Open with GIMP, Open with Inkscape.
 - GIMP/Inkscape menu entries are disabled if the app is unavailable at startup.
 - Bottom status bar shows: filename, mime type, human-readable file size, and dimensions.
 - MIME type is detected from file content using `libmagic` (package: `file`).
