@@ -291,20 +291,6 @@ bool load_image_frame_raw(const std::filesystem::path& path, int frame_num, RawI
   return ok;
 }
 
-bool can_decode_image_file(const std::filesystem::path& path) {
-  std::lock_guard<std::mutex> lk(g_imlib_decode_mutex);
-  int err = 0;
-  Imlib_Image im = imlib_load_image_with_errno_return(path.string().c_str(), &err);
-  if (!im) {
-    return false;
-  }
-  imlib_context_set_image(im);
-  const int w = imlib_image_get_width();
-  const int h = imlib_image_get_height();
-  imlib_free_image();
-  return w > 0 && h > 0;
-}
-
 void resolve_frame_rect(const RawImage& raw, const Imlib_Frame_Info& info, int canvas_w, int canvas_h,
                         int& fx, int& fy, int& fw, int& fh) {
   fx = std::clamp(info.frame_x, 0, canvas_w);
@@ -622,7 +608,6 @@ class ImageView : public Fl_Widget {
   }
 
   void set_navigate_callback(std::function<bool(int)> cb) { navigate_cb_ = std::move(cb); }
-  void set_can_navigate_callback(std::function<bool(int)> cb) { can_navigate_cb_ = std::move(cb); }
   void set_copy_callback(std::function<void()> cb) { copy_cb_ = std::move(cb); }
   void set_reload_callback(std::function<void()> cb) { reload_cb_ = std::move(cb); }
   void set_open_gimp_callback(std::function<void()> cb) { open_gimp_cb_ = std::move(cb); }
@@ -996,13 +981,11 @@ class ImageView : public Fl_Widget {
     const int image_flags = has_image_ ? 0 : FL_MENU_INACTIVE;
     const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
     const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
-    const int prev_flags = (has_image_ && can_navigate_cb_ && can_navigate_cb_(-1)) ? 0 : FL_MENU_INACTIVE;
-    const int next_flags = (has_image_ && can_navigate_cb_ && can_navigate_cb_(1)) ? 0 : FL_MENU_INACTIVE;
     Fl_Menu_Item items[11] = {};
     items[0] = {"Copy", 'c', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[1] = {"Reload", 'r', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[2] = {"Previous File", FL_Left, nullptr, nullptr, prev_flags, 0, 0, 0, 0};
-    items[3] = {"Next File", FL_Right, nullptr, nullptr, next_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[2] = {"Previous File", FL_Left, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[3] = {"Next File", FL_Right, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
     items[4] = {"Zoom In", '+', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[5] = {"Zoom Out", '-', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[6] = {"Zoom Reset", '0', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
@@ -1221,7 +1204,6 @@ class ImageView : public Fl_Widget {
   bool pan_d_ = false;
   bool pan_timer_active_ = false;
   std::function<bool(int)> navigate_cb_;
-  std::function<bool(int)> can_navigate_cb_;
   std::function<void()> copy_cb_;
   std::function<void()> reload_cb_;
   std::function<void()> open_file_cb_;
@@ -1722,34 +1704,14 @@ int main(int argc, char** argv) {
     return true;
   };
 
-  auto can_navigate = [&](int dir) -> bool {
+  view.set_navigate_callback([&](int dir) -> bool {
     if (current_file.empty() || dir_files.empty()) {
       return false;
     }
-
     const int n = static_cast<int>(dir_files.size());
     if (n <= 1) {
       return false;
     }
-    const int step = (dir >= 0) ? 1 : -1;
-    int i = static_cast<int>(current_index);
-    for (int tried = 0; tried < n - 1; ++tried) {
-      i = (i + step + n) % n;
-      const fs::path candidate = fs::absolute(dir_files[static_cast<size_t>(i)]).lexically_normal();
-      if (can_decode_image_file(candidate)) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  view.set_can_navigate_callback([&](int dir) -> bool { return can_navigate(dir); });
-
-  view.set_navigate_callback([&](int dir) -> bool {
-    if (!can_navigate(dir)) {
-      return false;
-    }
-    const int n = static_cast<int>(dir_files.size());
     const int step = (dir >= 0) ? 1 : -1;
     int i = static_cast<int>(current_index);
     for (int tried = 0; tried < n - 1; ++tried) {
