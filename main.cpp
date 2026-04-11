@@ -978,16 +978,16 @@ class ImageView : public Fl_Widget {
     const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
     const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
     Fl_Menu_Item items[11] = {};
-    items[0] = {"Copy (c)", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[1] = {"Reload (r)", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[2] = {"Previous File (←)", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[3] = {"Next File (→)", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[4] = {"Zoom In (+)", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[5] = {"Zoom Out (-)", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[6] = {"Zoom Reset (0)", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[7] = {"Open Image... (o)", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[8] = {"Open with GIMP (g)", 0, nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
-    items[9] = {"Open with Inkscape (i)", 0, nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
+    items[0] = {"Copy", 'c', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[1] = {"Reload", 'r', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[2] = {"Previous File", FL_Left, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[3] = {"Next File", FL_Right, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[4] = {"Zoom In", '+', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[5] = {"Zoom Out", '-', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[6] = {"Zoom Reset", '0', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[7] = {"Open Image...", 'o', nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[8] = {"Open with GIMP", 'g', nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
+    items[9] = {"Open with Inkscape", 'i', nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
     for (int i = 0; i < 10; ++i) {
       items[i].labelfont(menu_font_);
       items[i].labelsize(menu_font_size_);
@@ -1705,8 +1705,14 @@ int main(int argc, char** argv) {
       return false;
     }
 
-    for (int i = static_cast<int>(current_index) + dir;
-         i >= 0 && i < static_cast<int>(dir_files.size()); i += dir) {
+    const int n = static_cast<int>(dir_files.size());
+    if (n <= 1) {
+      return false;
+    }
+    const int step = (dir >= 0) ? 1 : -1;
+    int i = static_cast<int>(current_index);
+    for (int tried = 0; tried < n - 1; ++tried) {
+      i = (i + step + n) % n;
       const std::string candidate = dir_files[static_cast<size_t>(i)].string();
       if (load_and_apply(candidate, true)) {
         return true;

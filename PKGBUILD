@@ -4,7 +4,7 @@ pkgrel=1
 pkgdesc="Simple FLTK image viewer powered by imlib2"
 arch=('x86_64')
 url="https://github.com/blacklung/fliv"
-license=('custom')
+license=('GPL-2.0-or-later')
 depends=('fltk' 'imlib2' 'file')
 optdepends=(
     'wl-clipboard: copy image to clipboard on Wayland (wl-copy)'
