@@ -43,14 +43,38 @@ struct LoadedImage {
   std::vector<unsigned char> rgb;
 };
 
-struct DecodedImage {
-  std::vector<LoadedImage> frames;
-  std::vector<int> delays_ms;
-  int loop_count = 0;  // 0 means infinite.
+struct RawImage {
+  int w = 0;
+  int h = 0;
+  std::vector<DATA32> argb;
+};
 
-  bool is_animated() const { return frames.size() > 1; }
-  int width() const { return frames.empty() ? 0 : frames[0].w; }
-  int height() const { return frames.empty() ? 0 : frames[0].h; }
+struct AnimatedState {
+  std::filesystem::path path;
+  int frame_count = 0;
+  int loop_count = 0;  // 0 means infinite.
+  int canvas_w = 0;
+  int canvas_h = 0;
+  std::vector<DATA32> canvas;
+  std::vector<DATA32> saved_canvas;
+  bool has_saved_canvas = false;
+
+  int current_frame_num = 0;  // 1..frame_count
+  int current_flags = 0;
+  int current_delay_ms = 100;
+  int current_fx = 0;
+  int current_fy = 0;
+  int current_fw = 0;
+  int current_fh = 0;
+};
+
+struct DecodedImage {
+  LoadedImage frame;
+  bool animated = false;
+  AnimatedState anim;
+
+  int width() const { return frame.w; }
+  int height() const { return frame.h; }
 };
 
 struct FileMetadata {
@@ -68,34 +92,33 @@ int normalize_frame_delay_ms(int delay_ms) {
   return std::clamp(delay_ms, 20, 10000);
 }
 
-struct RawImage {
-  int w = 0;
-  int h = 0;
-  std::vector<DATA32> argb;
-};
-
 inline DATA32 alpha_blend_argb(DATA32 dst, DATA32 src) {
   const unsigned int sa = (src >> 24) & 0xff;
-  if (sa == 255) return src;
+  const unsigned int da = (dst >> 24) & 0xff;
   if (sa == 0) return dst;
+  if (sa == 255 || da == 0) return src;
 
   const unsigned int sr = (src >> 16) & 0xff;
   const unsigned int sg = (src >> 8) & 0xff;
   const unsigned int sb = src & 0xff;
-
-  const unsigned int da = (dst >> 24) & 0xff;
   const unsigned int dr = (dst >> 16) & 0xff;
   const unsigned int dg = (dst >> 8) & 0xff;
   const unsigned int db = dst & 0xff;
 
   const unsigned int inv_sa = 255 - sa;
   const unsigned int oa = sa + (da * inv_sa + 127) / 255;
-  const unsigned int or_ = sr + (dr * inv_sa + 127) / 255;
-  const unsigned int og = sg + (dg * inv_sa + 127) / 255;
-  const unsigned int ob = sb + (db * inv_sa + 127) / 255;
+  if (oa == 0) return 0;
 
-  return static_cast<DATA32>(((oa & 0xff) << 24) | ((or_ & 0xff) << 16) |
-                             ((og & 0xff) << 8) | (ob & 0xff));
+  // Straight-alpha source-over compositing.
+  const unsigned int premul_r = sr * sa + (dr * da * inv_sa + 127) / 255;
+  const unsigned int premul_g = sg * sa + (dg * da * inv_sa + 127) / 255;
+  const unsigned int premul_b = sb * sa + (db * da * inv_sa + 127) / 255;
+  const unsigned int or_ = (premul_r + oa / 2) / oa;
+  const unsigned int og = (premul_g + oa / 2) / oa;
+  const unsigned int ob = (premul_b + oa / 2) / oa;
+
+  return static_cast<DATA32>(((oa & 0xffu) << 24) | ((or_ & 0xffu) << 16) |
+                             ((og & 0xffu) << 8) | (ob & 0xffu));
 }
 
 void argb_to_checkerboard_rgb(const std::vector<DATA32>& argb, int w, int h, LoadedImage& out) {
@@ -145,116 +168,122 @@ bool read_current_imlib_image_raw(RawImage& out, std::string& err_out) {
   return true;
 }
 
-bool load_image_decoded(const char* path, DecodedImage& out, std::string& err_out) {
-  out = {};
+bool load_image_frame_raw(const std::filesystem::path& path, int frame_num, RawImage& raw,
+                          Imlib_Frame_Info& finfo, std::string& err_out) {
+  Imlib_Image im = imlib_load_image_frame(path.string().c_str(), frame_num);
+  if (!im) {
+    err_out = "failed to decode animation frame";
+    return false;
+  }
+  imlib_context_set_image(im);
+  const bool ok = read_current_imlib_image_raw(raw, err_out);
+  if (ok) {
+    finfo = {};
+    imlib_image_get_frame_info(&finfo);
+  }
+  imlib_free_image();
+  return ok;
+}
 
-  // Try multiframe path first; if unsupported, we will fall back to regular load below.
-  Imlib_Image first = imlib_load_image_frame(path, 1);
-  if (first) {
-    imlib_context_set_image(first);
-    RawImage raw0;
-    if (!read_current_imlib_image_raw(raw0, err_out)) {
-      imlib_free_image();
-      return false;
-    }
+void resolve_frame_rect(const RawImage& raw, const Imlib_Frame_Info& info, int canvas_w, int canvas_h,
+                        int& fx, int& fy, int& fw, int& fh) {
+  fx = std::clamp(info.frame_x, 0, canvas_w);
+  fy = std::clamp(info.frame_y, 0, canvas_h);
+  const int default_fw = (raw.w == canvas_w && raw.h == canvas_h) ? (canvas_w - fx) : raw.w;
+  const int default_fh = (raw.w == canvas_w && raw.h == canvas_h) ? (canvas_h - fy) : raw.h;
+  fw = std::clamp((info.frame_w > 0) ? info.frame_w : default_fw, 0, canvas_w - fx);
+  fh = std::clamp((info.frame_h > 0) ? info.frame_h : default_fh, 0, canvas_h - fy);
+}
 
-    Imlib_Frame_Info info = {};
-    imlib_image_get_frame_info(&info);
-    const int frame_count = std::max(1, info.frame_count);
-    out.loop_count = info.loop_count;
+void compose_frame_onto_canvas(AnimatedState& anim, const RawImage& raw, const Imlib_Frame_Info& info) {
+  int fx = 0, fy = 0, fw = 0, fh = 0;
+  resolve_frame_rect(raw, info, anim.canvas_w, anim.canvas_h, fx, fy, fw, fh);
 
-    const int canvas_w = (info.canvas_w > 0) ? info.canvas_w : raw0.w;
-    const int canvas_h = (info.canvas_h > 0) ? info.canvas_h : raw0.h;
-    std::vector<DATA32> canvas(static_cast<size_t>(canvas_w) * static_cast<size_t>(canvas_h), 0);
-    std::vector<DATA32> saved_canvas;
-    bool have_saved_canvas = false;
+  if (info.frame_flags & IMLIB_FRAME_DISPOSE_PREV) {
+    anim.saved_canvas = anim.canvas;
+    anim.has_saved_canvas = true;
+  } else {
+    anim.has_saved_canvas = false;
+  }
 
-    auto decode_frame = [&](int frame_num, RawImage& raw, Imlib_Frame_Info& finfo) -> bool {
-      Imlib_Image frame_im = (frame_num == 1) ? first : imlib_load_image_frame(path, frame_num);
-      if (!frame_im) return false;
-      imlib_context_set_image(frame_im);
-      bool ok = read_current_imlib_image_raw(raw, err_out);
-      if (ok) {
-        finfo = {};
-        imlib_image_get_frame_info(&finfo);
+  for (int y = 0; y < fh; ++y) {
+    for (int x = 0; x < fw; ++x) {
+      int sx = x;
+      int sy = y;
+      if (raw.w == anim.canvas_w && raw.h == anim.canvas_h) {
+        sx = fx + x;
+        sy = fy + y;
       }
-      if (frame_num != 1) {
-        imlib_free_image();
+      if (sx < 0 || sy < 0 || sx >= raw.w || sy >= raw.h) {
+        continue;
       }
-      return ok;
-    };
-
-    for (int frame_num = 1; frame_num <= frame_count; ++frame_num) {
-      RawImage raw;
-      Imlib_Frame_Info finfo = {};
-      if (!decode_frame(frame_num, raw, finfo)) {
-        break;
-      }
-
-      const int fx = std::clamp(finfo.frame_x, 0, canvas_w);
-      const int fy = std::clamp(finfo.frame_y, 0, canvas_h);
-      const int default_fw = (raw.w == canvas_w && raw.h == canvas_h) ? (canvas_w - fx) : raw.w;
-      const int default_fh = (raw.w == canvas_w && raw.h == canvas_h) ? (canvas_h - fy) : raw.h;
-      const int fw = std::clamp((finfo.frame_w > 0) ? finfo.frame_w : default_fw, 0, canvas_w - fx);
-      const int fh = std::clamp((finfo.frame_h > 0) ? finfo.frame_h : default_fh, 0, canvas_h - fy);
-
-      if (finfo.frame_flags & IMLIB_FRAME_DISPOSE_PREV) {
-        saved_canvas = canvas;
-        have_saved_canvas = true;
+      const size_t src_i = static_cast<size_t>(sy) * static_cast<size_t>(raw.w) + static_cast<size_t>(sx);
+      const size_t dst_i =
+          static_cast<size_t>(fy + y) * static_cast<size_t>(anim.canvas_w) + static_cast<size_t>(fx + x);
+      const DATA32 src_px = raw.argb[src_i];
+      if (info.frame_flags & IMLIB_FRAME_BLEND) {
+        anim.canvas[dst_i] = alpha_blend_argb(anim.canvas[dst_i], src_px);
       } else {
-        have_saved_canvas = false;
+        anim.canvas[dst_i] = src_px;
       }
-
-      for (int y = 0; y < fh; ++y) {
-        for (int x = 0; x < fw; ++x) {
-          int sx = x;
-          int sy = y;
-          if (raw.w == canvas_w && raw.h == canvas_h) {
-            sx = fx + x;
-            sy = fy + y;
-          }
-          if (sx < 0 || sy < 0 || sx >= raw.w || sy >= raw.h) {
-            continue;
-          }
-          const size_t src_i = static_cast<size_t>(sy) * static_cast<size_t>(raw.w) + static_cast<size_t>(sx);
-          const size_t dst_i =
-              static_cast<size_t>(fy + y) * static_cast<size_t>(canvas_w) + static_cast<size_t>(fx + x);
-          const DATA32 src_px = raw.argb[src_i];
-          if (finfo.frame_flags & IMLIB_FRAME_BLEND) {
-            canvas[dst_i] = alpha_blend_argb(canvas[dst_i], src_px);
-          } else {
-            canvas[dst_i] = src_px;
-          }
-        }
-      }
-
-      LoadedImage composed;
-      argb_to_checkerboard_rgb(canvas, canvas_w, canvas_h, composed);
-      out.frames.push_back(std::move(composed));
-      out.delays_ms.push_back(normalize_frame_delay_ms(finfo.frame_delay));
-
-      if (finfo.frame_flags & IMLIB_FRAME_DISPOSE_CLEAR) {
-        for (int y = 0; y < fh; ++y) {
-          const size_t row = static_cast<size_t>(fy + y) * static_cast<size_t>(canvas_w);
-          for (int x = 0; x < fw; ++x) {
-            canvas[row + static_cast<size_t>(fx + x)] = 0;
-          }
-        }
-      } else if ((finfo.frame_flags & IMLIB_FRAME_DISPOSE_PREV) && have_saved_canvas) {
-        canvas = saved_canvas;
-      }
-    }
-
-    imlib_context_set_image(first);
-    imlib_free_image();
-
-    if (!out.frames.empty()) {
-      return true;
     }
   }
 
+  anim.current_flags = info.frame_flags;
+  anim.current_delay_ms = normalize_frame_delay_ms(info.frame_delay);
+  anim.current_fx = fx;
+  anim.current_fy = fy;
+  anim.current_fw = fw;
+  anim.current_fh = fh;
+}
+
+void apply_previous_frame_disposal(AnimatedState& anim) {
+  if (anim.current_flags & IMLIB_FRAME_DISPOSE_CLEAR) {
+    for (int y = 0; y < anim.current_fh; ++y) {
+      const size_t row = static_cast<size_t>(anim.current_fy + y) * static_cast<size_t>(anim.canvas_w);
+      for (int x = 0; x < anim.current_fw; ++x) {
+        anim.canvas[row + static_cast<size_t>(anim.current_fx + x)] = 0;
+      }
+    }
+  } else if ((anim.current_flags & IMLIB_FRAME_DISPOSE_PREV) && anim.has_saved_canvas) {
+    anim.canvas = anim.saved_canvas;
+  }
+}
+
+bool load_image_decoded(const char* path, DecodedImage& out, std::string& err_out) {
+  out = {};
+  const std::filesystem::path abs = std::filesystem::absolute(std::filesystem::path(path)).lexically_normal();
+
+  RawImage raw0;
+  Imlib_Frame_Info info0 = {};
+  if (load_image_frame_raw(abs, 1, raw0, info0, err_out)) {
+    const int frame_count = std::max(1, info0.frame_count);
+    const int canvas_w = (info0.canvas_w > 0) ? info0.canvas_w : raw0.w;
+    const int canvas_h = (info0.canvas_h > 0) ? info0.canvas_h : raw0.h;
+
+    AnimatedState anim;
+    anim.path = abs;
+    anim.frame_count = frame_count;
+    anim.loop_count = std::max(0, info0.loop_count);
+    anim.canvas_w = canvas_w;
+    anim.canvas_h = canvas_h;
+    anim.canvas.assign(static_cast<size_t>(canvas_w) * static_cast<size_t>(canvas_h), 0);
+    anim.current_frame_num = 1;
+
+    compose_frame_onto_canvas(anim, raw0, info0);
+
+    LoadedImage composed;
+    argb_to_checkerboard_rgb(anim.canvas, anim.canvas_w, anim.canvas_h, composed);
+    out.frame = std::move(composed);
+    if (frame_count > 1) {
+      out.animated = true;
+      out.anim = std::move(anim);
+    }
+    return true;
+  }
+
   int err = 0;
-  Imlib_Image im = imlib_load_image_with_errno_return(path, &err);
+  Imlib_Image im = imlib_load_image_with_errno_return(abs.string().c_str(), &err);
   if (!im) {
     const char* err_str = imlib_strerror(err);
     err_out = err_str ? err_str : "unknown load error";
@@ -269,10 +298,7 @@ bool load_image_decoded(const char* path, DecodedImage& out, std::string& err_ou
   }
   imlib_free_image();
 
-  LoadedImage still;
-  argb_to_checkerboard_rgb(raw.argb, raw.w, raw.h, still);
-  out.frames.push_back(std::move(still));
-  out.delays_ms.push_back(0);
+  argb_to_checkerboard_rgb(raw.argb, raw.w, raw.h, out.frame);
   return true;
 }
 
@@ -296,10 +322,8 @@ class ImageView : public Fl_Widget {
 
   void set_image(LoadedImage image) {
     stop_animation();
-    animation_frames_.clear();
-    animation_delays_ms_.clear();
-    animation_frame_index_ = 0;
-    animation_loop_count_ = 0;
+    animation_ = {};
+    has_animation_ = false;
     animation_loops_done_ = 0;
 
     image_ = std::move(image);
@@ -309,21 +333,16 @@ class ImageView : public Fl_Widget {
     redraw();
   }
 
-  void set_animation(std::vector<LoadedImage> frames, std::vector<int> delays_ms, int loop_count) {
+  void set_animation(AnimatedState animation, LoadedImage first_frame) {
     stop_animation();
-    image_ = {};
-    animation_frames_ = std::move(frames);
-    animation_delays_ms_ = std::move(delays_ms);
-    if (animation_delays_ms_.size() < animation_frames_.size()) {
-      animation_delays_ms_.resize(animation_frames_.size(), 100);
-    }
-    animation_frame_index_ = 0;
+    animation_ = std::move(animation);
+    has_animation_ = animation_.frame_count > 1;
     animation_loops_done_ = 0;
-    animation_loop_count_ = std::max(0, loop_count);
-    has_image_ = !animation_frames_.empty();
+    image_ = std::move(first_frame);
+    has_image_ = (image_.w > 0 && image_.h > 0 && !image_.rgb.empty());
     sync_image_pointers();
     reset_zoom();
-    if (animation_frames_.size() > 1) {
+    if (has_animation_) {
       schedule_animation_for_current_frame();
     }
     redraw();
@@ -334,10 +353,8 @@ class ImageView : public Fl_Widget {
   void clear_image() {
     stop_animation();
     image_ = {};
-    animation_frames_.clear();
-    animation_delays_ms_.clear();
-    animation_frame_index_ = 0;
-    animation_loop_count_ = 0;
+    animation_ = {};
+    has_animation_ = false;
     animation_loops_done_ = 0;
     has_image_ = false;
     sync_image_pointers();
@@ -490,13 +507,10 @@ class ImageView : public Fl_Widget {
   }
 
   void schedule_animation_for_current_frame() {
-    if (!has_image_ || animation_frames_.size() <= 1) {
+    if (!has_image_ || !has_animation_ || animation_.frame_count <= 1) {
       return;
     }
-    if (animation_frame_index_ >= animation_delays_ms_.size()) {
-      return;
-    }
-    const int delay_ms = normalize_frame_delay_ms(animation_delays_ms_[animation_frame_index_]);
+    const int delay_ms = normalize_frame_delay_ms(animation_.current_delay_ms);
     animation_timer_active_ = true;
     Fl::add_timeout(static_cast<double>(delay_ms) / 1000.0, animation_timer_cb, this);
   }
@@ -509,26 +523,34 @@ class ImageView : public Fl_Widget {
   }
 
   void advance_animation_frame() {
-    if (!has_image_ || animation_frames_.size() <= 1) {
+    if (!has_image_ || !has_animation_ || animation_.frame_count <= 1) {
       return;
     }
 
-    size_t next = animation_frame_index_ + 1;
-    if (next >= animation_frames_.size()) {
-      if (animation_loop_count_ > 0) {
+    int next = animation_.current_frame_num + 1;
+    if (next > animation_.frame_count) {
+      if (animation_.loop_count > 0) {
         ++animation_loops_done_;
-        if (animation_loops_done_ >= animation_loop_count_) {
-          animation_frame_index_ = animation_frames_.size() - 1;
-          sync_image_pointers();
-          clamp_offsets();
-          redraw();
+        if (animation_loops_done_ >= animation_.loop_count) {
           return;
         }
       }
-      next = 0;
+      next = 1;
     }
 
-    animation_frame_index_ = next;
+    apply_previous_frame_disposal(animation_);
+
+    RawImage raw;
+    Imlib_Frame_Info finfo = {};
+    std::string err;
+    if (!load_image_frame_raw(animation_.path, next, raw, finfo, err)) {
+      return;
+    }
+
+    compose_frame_onto_canvas(animation_, raw, finfo);
+    animation_.current_frame_num = next;
+
+    argb_to_checkerboard_rgb(animation_.canvas, animation_.canvas_w, animation_.canvas_h, image_);
     sync_image_pointers();
     clamp_offsets();
     redraw();
@@ -864,25 +886,15 @@ class ImageView : public Fl_Widget {
   }
 
   void sync_image_pointers() {
-    if (!animation_frames_.empty()) {
-      const size_t idx = std::min(animation_frame_index_, animation_frames_.size() - 1);
-      const LoadedImage& cur = animation_frames_[idx];
-      src_pixels_ = cur.rgb.data();
-      src_w_ = cur.w;
-      src_h_ = cur.h;
-    } else {
-      src_pixels_ = image_.rgb.data();
-      src_w_ = image_.w;
-      src_h_ = image_.h;
-    }
+    src_pixels_ = image_.rgb.data();
+    src_w_ = image_.w;
+    src_h_ = image_.h;
     scaled_view_.clear();
   }
 
   LoadedImage image_;
-  std::vector<LoadedImage> animation_frames_;
-  std::vector<int> animation_delays_ms_;
-  size_t animation_frame_index_ = 0;
-  int animation_loop_count_ = 0;
+  AnimatedState animation_;
+  bool has_animation_ = false;
   int animation_loops_done_ = 0;
   bool animation_timer_active_ = false;
   bool has_image_ = false;
@@ -1239,10 +1251,10 @@ int main(int argc, char** argv) {
   view.set_external_app_availability(command_exists("gimp"), command_exists("inkscape"));
 
   auto apply_decoded_to_view = [&](DecodedImage&& media) {
-    if (media.is_animated()) {
-      view.set_animation(std::move(media.frames), std::move(media.delays_ms), media.loop_count);
-    } else if (!media.frames.empty()) {
-      view.set_image(std::move(media.frames[0]));
+    if (media.animated) {
+      view.set_animation(std::move(media.anim), std::move(media.frame));
+    } else if (media.frame.w > 0 && media.frame.h > 0 && !media.frame.rgb.empty()) {
+      view.set_image(std::move(media.frame));
     } else {
       view.clear_image();
     }

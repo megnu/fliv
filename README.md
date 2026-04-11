@@ -1,6 +1,6 @@
-# fliv (stage 1)
+# fliv
 
-A minimal FLTK 1.4 + imlib2 image viewer baseline.
+A simple FLTK 1.4 + imlib2 image viewer.
 
 ## Build
 
@@ -89,7 +89,7 @@ Rendering pipeline facts for this app:
 - Decoding is done by imlib2.
 - Pixel input from imlib2 is `DATA32` ARGB.
 - `fliv` converts to RGB and composites alpha onto a checkerboard.
-- Animated/container formats are currently displayed as a single still frame in stage 1.
+- Multiframe formats are played with imlib2 frame timing and disposal/blend compositing.
 
 ## Reference docs used
 
