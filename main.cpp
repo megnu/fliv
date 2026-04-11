@@ -632,7 +632,7 @@ class ImageView : public Fl_Widget {
     image_ = std::move(image);
     has_image_ = (image_.w > 0 && image_.h > 0 && !image_.rgb.empty());
     sync_image_pointers();
-    reset_zoom();
+    fit_to_window();
     redraw();
   }
 
@@ -644,7 +644,7 @@ class ImageView : public Fl_Widget {
     image_ = std::move(first_frame);
     has_image_ = (image_.w > 0 && image_.h > 0 && !image_.rgb.empty());
     sync_image_pointers();
-    reset_zoom();
+    fit_to_window();
     if (has_animation_) {
       anim_engine_ = std::make_unique<AnimationEngine>(animation_);
       anim_engine_->prime_prefetch_next();
@@ -907,7 +907,7 @@ class ImageView : public Fl_Widget {
     return std::min(1.0, std::min(sx, sy));
   }
 
-  double current_scale() const { return std::clamp(fit_scale() * zoom_, kZoomMin, kZoomMax); }
+  double current_scale() const { return std::clamp(zoom_, kZoomMin, kZoomMax); }
 
   int scaled_w() const { return std::max(1, static_cast<int>(src_w_ * current_scale())); }
   int scaled_h() const { return std::max(1, static_cast<int>(src_h_ * current_scale())); }
@@ -1036,18 +1036,19 @@ class ImageView : public Fl_Widget {
     const int image_flags = has_image_ ? 0 : FL_MENU_INACTIVE;
     const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
     const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
-    Fl_Menu_Item items[11] = {};
+    Fl_Menu_Item items[12] = {};
     items[0] = {"Copy", 'c', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[1] = {"Reload", 'r', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
     items[2] = {"Previous File", FL_Left, nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[3] = {"Next File", FL_Right, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
     items[4] = {"Zoom In", '+', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[5] = {"Zoom Out", '-', nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[6] = {"Zoom Reset", '0', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[7] = {"Open Image...", 'o', nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[8] = {"Open with GIMP", 'g', nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
-    items[9] = {"Open with Inkscape", 'i', nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
-    for (int i = 0; i < 10; ++i) {
+    items[6] = {"Zoom Reset", '0', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[7] = {"Fit to Window", 'f', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[8] = {"Open Image...", 'o', nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[9] = {"Open with GIMP", 'g', nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
+    items[10] = {"Open with Inkscape", 'i', nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
+    for (int i = 0; i < 11; ++i) {
       items[i].labelfont(menu_font_);
       items[i].labelsize(menu_font_size_);
     }
@@ -1073,10 +1074,12 @@ class ImageView : public Fl_Widget {
     } else if (chosen == &items[6]) {
       reset_zoom();
     } else if (chosen == &items[7]) {
-      if (open_file_cb_) open_file_cb_();
+      fit_to_window();
     } else if (chosen == &items[8]) {
-      if (open_gimp_cb_) open_gimp_cb_();
+      if (open_file_cb_) open_file_cb_();
     } else if (chosen == &items[9]) {
+      if (open_gimp_cb_) open_gimp_cb_();
+    } else if (chosen == &items[10]) {
       if (open_inkscape_cb_) open_inkscape_cb_();
     }
   }
@@ -1093,6 +1096,10 @@ class ImageView : public Fl_Widget {
     }
     if (key == '0' || key == (FL_KP + '0')) {
       reset_zoom();
+      return true;
+    }
+    if (key == 'f' || key == 'F' || ((Fl::event_state() & FL_CTRL) && key == ('f' & 0x1f))) {
+      fit_to_window();
       return true;
     }
     return false;
@@ -1226,6 +1233,14 @@ class ImageView : public Fl_Widget {
     redraw();
   }
 
+  void fit_to_window() {
+    zoom_ = fit_scale();
+    img_x_ = 0;
+    img_y_ = 0;
+    clamp_offsets();
+    redraw();
+  }
+
   void sync_image_pointers() {
     src_pixels_ = image_.rgb.data();
     src_w_ = image_.w;
@@ -1248,7 +1263,7 @@ class ImageView : public Fl_Widget {
   bool dragging_ = false;
   int drag_last_x_ = 0;
   int drag_last_y_ = 0;
-  double zoom_ = 1.0;  // Relative to fit-to-window scale.
+  double zoom_ = 1.0;  // Absolute image scale; 1.0 = 100% native size.
   bool pan_w_ = false;
   bool pan_a_ = false;
   bool pan_s_ = false;
