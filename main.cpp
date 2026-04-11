@@ -8,15 +8,22 @@
 #include <FL/Fl_RGB_Image.H>
 
 #include <Imlib2.h>
+#include <magic.h>
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <list>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -250,6 +257,195 @@ void apply_previous_frame_disposal(AnimatedState& anim) {
   }
 }
 
+struct DecodedAnimFrame {
+  RawImage raw;
+  Imlib_Frame_Info info = {};
+};
+
+class AnimationDecoder {
+ public:
+  explicit AnimationDecoder(std::filesystem::path path) : path_(std::move(path)) {}
+
+  bool decode_frame(int frame_num, DecodedAnimFrame& out, std::string& err_out) const {
+    return load_image_frame_raw(path_, frame_num, out.raw, out.info, err_out);
+  }
+
+ private:
+  std::filesystem::path path_;
+};
+
+class FrameCacheLRU {
+ public:
+  explicit FrameCacheLRU(size_t capacity) : capacity_(std::max<size_t>(1, capacity)) {}
+
+  std::shared_ptr<DecodedAnimFrame> get(int frame_num) {
+    auto it = map_.find(frame_num);
+    if (it == map_.end()) return nullptr;
+    order_.erase(it->second.order_it);
+    order_.push_front(frame_num);
+    it->second.order_it = order_.begin();
+    return it->second.frame;
+  }
+
+  void put(int frame_num, std::shared_ptr<DecodedAnimFrame> frame) {
+    auto it = map_.find(frame_num);
+    if (it != map_.end()) {
+      order_.erase(it->second.order_it);
+      map_.erase(it);
+    }
+    order_.push_front(frame_num);
+    map_[frame_num] = {std::move(frame), order_.begin()};
+    while (map_.size() > capacity_) {
+      const int victim = order_.back();
+      order_.pop_back();
+      map_.erase(victim);
+    }
+  }
+
+ private:
+  struct Entry {
+    std::shared_ptr<DecodedAnimFrame> frame;
+    std::list<int>::iterator order_it;
+  };
+  size_t capacity_;
+  std::list<int> order_;
+  std::unordered_map<int, Entry> map_;
+};
+
+class AnimationEngine {
+ public:
+  explicit AnimationEngine(AnimatedState state)
+      : state_(std::move(state)), decoder_(state_.path), cache_(6) {
+    worker_ = std::thread([this]() { worker_loop(); });
+  }
+
+  ~AnimationEngine() { stop_worker(); }
+
+  int current_delay_ms() const { return state_.current_delay_ms; }
+
+  void prime_prefetch_next() {
+    const int next = next_frame_num();
+    if (next <= 0) return;
+    request_prefetch(next);
+  }
+
+  bool advance(LoadedImage& out_rgb) {
+    const int next = next_frame_num();
+    if (next <= 0) return false;
+
+    apply_previous_frame_disposal(state_);
+
+    auto frame = pop_cached_or_decode(next);
+    if (!frame) {
+      return false;
+    }
+
+    compose_frame_onto_canvas(state_, frame->raw, frame->info);
+    state_.current_frame_num = next;
+    argb_to_checkerboard_rgb(state_.canvas, state_.canvas_w, state_.canvas_h, out_rgb);
+    request_prefetch(next_frame_num());
+    return true;
+  }
+
+ private:
+  int next_frame_num() {
+    if (state_.frame_count <= 1) return -1;
+    int next = state_.current_frame_num + 1;
+    if (next > state_.frame_count) {
+      if (state_.loop_count > 0) {
+        ++loops_done_;
+        if (loops_done_ >= state_.loop_count) {
+          return -1;
+        }
+      }
+      next = 1;
+    }
+    return next;
+  }
+
+  std::shared_ptr<DecodedAnimFrame> pop_cached_or_decode(int frame_num) {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      if (auto cached = cache_.get(frame_num)) {
+        return cached;
+      }
+    }
+
+    auto decoded = std::make_shared<DecodedAnimFrame>();
+    std::string err;
+    if (!decoder_.decode_frame(frame_num, *decoded, err)) {
+      return nullptr;
+    }
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      cache_.put(frame_num, decoded);
+    }
+    return decoded;
+  }
+
+  void request_prefetch(int frame_num) {
+    if (frame_num <= 0) return;
+    std::lock_guard<std::mutex> lk(mu_);
+    if (cache_.get(frame_num)) {
+      return;
+    }
+    pending_frame_ = frame_num;
+    has_pending_ = true;
+    cv_.notify_one();
+  }
+
+  void worker_loop() {
+    for (;;) {
+      int target = 0;
+      {
+        std::unique_lock<std::mutex> lk(mu_);
+        cv_.wait(lk, [&]() { return stop_ || has_pending_; });
+        if (stop_) return;
+        target = pending_frame_;
+        has_pending_ = false;
+        if (cache_.get(target)) {
+          continue;
+        }
+      }
+
+      auto decoded = std::make_shared<DecodedAnimFrame>();
+      std::string err;
+      if (!decoder_.decode_frame(target, *decoded, err)) {
+        continue;
+      }
+      {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!stop_) {
+          cache_.put(target, decoded);
+        }
+      }
+    }
+  }
+
+  void stop_worker() {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      stop_ = true;
+      has_pending_ = false;
+    }
+    cv_.notify_one();
+    if (worker_.joinable()) {
+      worker_.join();
+    }
+  }
+
+  AnimatedState state_;
+  int loops_done_ = 0;
+  AnimationDecoder decoder_;
+  FrameCacheLRU cache_;
+  std::thread worker_;
+  std::mutex mu_;
+  std::condition_variable cv_;
+  bool stop_ = false;
+  bool has_pending_ = false;
+  int pending_frame_ = 0;
+};
+
 bool load_image_decoded(const char* path, DecodedImage& out, std::string& err_out) {
   out = {};
   const std::filesystem::path abs = std::filesystem::absolute(std::filesystem::path(path)).lexically_normal();
@@ -322,9 +518,9 @@ class ImageView : public Fl_Widget {
 
   void set_image(LoadedImage image) {
     stop_animation();
+    anim_engine_.reset();
     animation_ = {};
     has_animation_ = false;
-    animation_loops_done_ = 0;
 
     image_ = std::move(image);
     has_image_ = (image_.w > 0 && image_.h > 0 && !image_.rgb.empty());
@@ -335,14 +531,16 @@ class ImageView : public Fl_Widget {
 
   void set_animation(AnimatedState animation, LoadedImage first_frame) {
     stop_animation();
+    anim_engine_.reset();
     animation_ = std::move(animation);
     has_animation_ = animation_.frame_count > 1;
-    animation_loops_done_ = 0;
     image_ = std::move(first_frame);
     has_image_ = (image_.w > 0 && image_.h > 0 && !image_.rgb.empty());
     sync_image_pointers();
     reset_zoom();
     if (has_animation_) {
+      anim_engine_ = std::make_unique<AnimationEngine>(animation_);
+      anim_engine_->prime_prefetch_next();
       schedule_animation_for_current_frame();
     }
     redraw();
@@ -352,10 +550,10 @@ class ImageView : public Fl_Widget {
 
   void clear_image() {
     stop_animation();
+    anim_engine_.reset();
     image_ = {};
     animation_ = {};
     has_animation_ = false;
-    animation_loops_done_ = 0;
     has_image_ = false;
     sync_image_pointers();
     clear_pan_keys();
@@ -507,10 +705,10 @@ class ImageView : public Fl_Widget {
   }
 
   void schedule_animation_for_current_frame() {
-    if (!has_image_ || !has_animation_ || animation_.frame_count <= 1) {
+    if (!has_image_ || !has_animation_ || !anim_engine_) {
       return;
     }
-    const int delay_ms = normalize_frame_delay_ms(animation_.current_delay_ms);
+    const int delay_ms = normalize_frame_delay_ms(anim_engine_->current_delay_ms());
     animation_timer_active_ = true;
     Fl::add_timeout(static_cast<double>(delay_ms) / 1000.0, animation_timer_cb, this);
   }
@@ -523,34 +721,12 @@ class ImageView : public Fl_Widget {
   }
 
   void advance_animation_frame() {
-    if (!has_image_ || !has_animation_ || animation_.frame_count <= 1) {
+    if (!has_image_ || !has_animation_ || !anim_engine_) {
       return;
     }
-
-    int next = animation_.current_frame_num + 1;
-    if (next > animation_.frame_count) {
-      if (animation_.loop_count > 0) {
-        ++animation_loops_done_;
-        if (animation_loops_done_ >= animation_.loop_count) {
-          return;
-        }
-      }
-      next = 1;
-    }
-
-    apply_previous_frame_disposal(animation_);
-
-    RawImage raw;
-    Imlib_Frame_Info finfo = {};
-    std::string err;
-    if (!load_image_frame_raw(animation_.path, next, raw, finfo, err)) {
+    if (!anim_engine_->advance(image_)) {
       return;
     }
-
-    compose_frame_onto_canvas(animation_, raw, finfo);
-    animation_.current_frame_num = next;
-
-    argb_to_checkerboard_rgb(animation_.canvas, animation_.canvas_w, animation_.canvas_h, image_);
     sync_image_pointers();
     clamp_offsets();
     redraw();
@@ -894,8 +1070,8 @@ class ImageView : public Fl_Widget {
 
   LoadedImage image_;
   AnimatedState animation_;
+  std::unique_ptr<AnimationEngine> anim_engine_;
   bool has_animation_ = false;
-  int animation_loops_done_ = 0;
   bool animation_timer_active_ = false;
   bool has_image_ = false;
   const unsigned char* src_pixels_ = nullptr;
@@ -1052,45 +1228,38 @@ bool command_exists(const char* cmd) {
   return std::system(probe.c_str()) == 0;
 }
 
-std::string to_lower(std::string s) {
-  for (char& c : s) {
-    if (c >= 'A' && c <= 'Z') {
-      c = static_cast<char>(c - 'A' + 'a');
+std::string detect_mime_type(const std::filesystem::path& p) {
+  static std::mutex mu;
+  static bool initialized = false;
+  static bool available = false;
+  static magic_t cookie = nullptr;
+
+  std::lock_guard<std::mutex> lk(mu);
+  if (!initialized) {
+    cookie = magic_open(MAGIC_MIME_TYPE);
+    if (cookie && magic_load(cookie, nullptr) == 0) {
+      available = true;
+    } else if (cookie) {
+      magic_close(cookie);
+      cookie = nullptr;
+    }
+    initialized = true;
+  }
+
+  if (available && cookie) {
+    const std::string ps = p.string();
+    const char* mime = magic_file(cookie, ps.c_str());
+    if (mime && mime[0]) {
+      return std::string(mime);
     }
   }
-  return s;
-}
-
-std::string guess_mime_type(const std::filesystem::path& p) {
-  const std::string ext = to_lower(p.extension().string());
-  if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
-  if (ext == ".png") return "image/png";
-  if (ext == ".gif") return "image/gif";
-  if (ext == ".bmp") return "image/bmp";
-  if (ext == ".webp") return "image/webp";
-  if (ext == ".tif" || ext == ".tiff") return "image/tiff";
-  if (ext == ".svg") return "image/svg+xml";
-  if (ext == ".avif") return "image/avif";
-  if (ext == ".heif") return "image/heif";
-  if (ext == ".heic") return "image/heic";
-  if (ext == ".jxl") return "image/jxl";
-  if (ext == ".jp2" || ext == ".j2k") return "image/jp2";
-  if (ext == ".ico") return "image/x-icon";
-  if (ext == ".xbm") return "image/x-xbitmap";
-  if (ext == ".xpm") return "image/x-xpixmap";
-  if (ext == ".pnm") return "image/x-portable-anymap";
-  if (ext == ".pbm") return "image/x-portable-bitmap";
-  if (ext == ".pgm") return "image/x-portable-graymap";
-  if (ext == ".ppm") return "image/x-portable-pixmap";
-  if (ext == ".tga") return "image/x-tga";
-  if (ext == ".qoi") return "image/qoi";
   return "application/octet-stream";
 }
 
 FileMetadata build_file_metadata(const std::filesystem::path& file) {
   FileMetadata meta;
   meta.path = file;
-  meta.mime = guess_mime_type(file);
+  meta.mime = detect_mime_type(file);
   std::error_code ec;
   meta.size_bytes = std::filesystem::file_size(file, ec);
   if (ec) {

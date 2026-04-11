@@ -51,6 +51,7 @@ make
 - Right-click menu: Copy, Reload, Previous/Next File, Zoom In/Out/Reset, Open Image, Open with GIMP, Open with Inkscape.
 - GIMP/Inkscape menu entries are disabled if the app is unavailable at startup.
 - Bottom status bar shows: filename, mime type, human-readable file size, and dimensions.
+- MIME type is detected from file content using `libmagic` (package: `file`).
 
 ## Format support
 
