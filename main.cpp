@@ -1054,12 +1054,12 @@ class ImageView : public Fl_Widget {
     Fl_Menu_Item items[13] = {};
     items[0] = {"Copy", 'c', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[1] = {"Reload", 'r', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[2] = {"Previous File", FL_Left, nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[3] = {"Next File", FL_Right, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[2] = {"Previous File", 'p', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[3] = {"Next File", 'n', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
     items[4] = {"Zoom In", '+', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[5] = {"Zoom Out", '-', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[6] = {"Zoom Reset", '0', nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[7] = {"Fit to Window", 'f', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[7] = {"Fit to Window", 'f', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[8] = {"Toggle Fullscreen", FL_F + 11, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
     items[9] = {"Open Image...", 'o', nullptr, nullptr, 0, 0, 0, 0, 0};
     items[10] = {"Open with GIMP", 'g', nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
@@ -1116,7 +1116,7 @@ class ImageView : public Fl_Widget {
       reset_zoom();
       return true;
     }
-    if (key == 'f' || key == 'F' || ((Fl::event_state() & FL_CTRL) && key == ('f' & 0x1f))) {
+    if (key == 'f' || key == 'F') {
       fit_to_window();
       return true;
     }
@@ -1125,6 +1125,14 @@ class ImageView : public Fl_Widget {
 
   bool handle_navigation_shortcuts() {
     const int key = Fl::event_key();
+    const bool prev_key = (key == 'p' || key == 'P');
+    const bool next_key = (key == 'n' || key == 'N');
+    if (prev_key) {
+      return navigate_cb_ ? navigate_cb_(-1) : false;
+    }
+    if (next_key) {
+      return navigate_cb_ ? navigate_cb_(1) : false;
+    }
     if (key == FL_Left) {
       return navigate_cb_ ? navigate_cb_(-1) : false;
     }
@@ -1153,7 +1161,7 @@ class ImageView : public Fl_Widget {
 
   bool handle_reload_shortcut() {
     const int key = Fl::event_key();
-    if (key == 'r' || key == 'R' || ((Fl::event_state() & FL_CTRL) && key == ('r' & 0x1f))) {
+    if (key == 'r' || key == 'R') {
       if (reload_cb_) {
         reload_cb_();
       }
@@ -1194,9 +1202,7 @@ class ImageView : public Fl_Widget {
 
   bool handle_external_open_shortcuts() {
     const int key = Fl::event_key();
-    const bool ctrl = (Fl::event_state() & FL_CTRL) != 0;
-
-    const bool gimp_key = (key == 'g' || key == 'G' || (ctrl && key == ('g' & 0x1f)));
+    const bool gimp_key = (key == 'g' || key == 'G');
     if (gimp_key) {
       if (open_gimp_cb_) {
         open_gimp_cb_();
@@ -1204,7 +1210,7 @@ class ImageView : public Fl_Widget {
       return true;
     }
 
-    const bool inkscape_key = (key == 'i' || key == 'I' || (ctrl && key == ('i' & 0x1f)));
+    const bool inkscape_key = (key == 'i' || key == 'I');
     if (inkscape_key) {
       if (open_inkscape_cb_) {
         open_inkscape_cb_();

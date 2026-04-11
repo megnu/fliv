@@ -36,9 +36,9 @@ make
 - Animated/multiframe images auto-play using per-frame delays from imlib2 frame info.
 - Zoom controls:
 - `+` or `=` or `Ctrl` + `+` or `Ctrl` + `=`: zoom in
-- `-` or `Ctrl` + `-`: zoom out
-- `0` or `Ctrl` + `0`: reset zoom
-- `f` or `Ctrl` + `f`: fit image to window
+- `-`: zoom out
+- `0`: reset zoom
+- `f`: fit image to window
 - `F11`: toggle fullscreen
 - Mouse wheel: zoom in/out
 - `W` / `A` / `S` / `D`: pan up / left / down / right
@@ -46,13 +46,13 @@ make
 - Left-click drag: pan image by dragging
 - Pan is edge-restricted (no movement past image bounds).
 - Zoom rendering is viewport-based (only visible pixels are sampled/rendered).
-- `Left` / `Right`: previous/next decodable file in the current directory.
+- `p` / `n` or `Left` / `Right`: previous/next decodable file in the current directory.
 - Unsupported/unreadable files are skipped automatically.
-- `r` or `Ctrl+R`: reload current image from disk.
+- `r`: reload current image from disk.
 - `o` or `Ctrl+O`: open image file picker.
 - `c` or `Ctrl+C`: copy current image file to clipboard (`wl-copy` on Wayland, `xclip` on X11).
-- `g` or `Ctrl+G`: open current image in GIMP (if installed).
-- `i` or `Ctrl+I`: open current image in Inkscape (if installed).
+- `g`: open current image in GIMP (if installed).
+- `i`: open current image in Inkscape (if installed).
 - `Esc`: exit fullscreen first (if active), otherwise quit.
 - Program can start with no input image; empty state shows an open hint and accepts open shortcut/menu.
 - Right-click menu: Copy, Reload, Previous/Next File, Zoom In/Out/Reset, Fit to Window, Toggle Fullscreen, Open Image, Open with GIMP, Open with Inkscape.
