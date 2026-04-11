@@ -1027,10 +1027,6 @@ class ImageView : public Fl_Widget {
   }
 
   bool handle_zoom_shortcuts() {
-    if (!(Fl::event_state() & FL_CTRL)) {
-      return false;
-    }
-
     const int key = Fl::event_key();
     if (key == '+' || key == '=' || key == (FL_KP + '+')) {
       zoom_by(kZoomStep, viewport_w() / 2, viewport_h() / 2);
