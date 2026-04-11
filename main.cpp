@@ -3,6 +3,7 @@
 #include <FL/Fl_Widget.H>
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Menu_Item.H>
+#include <FL/Fl_Native_File_Chooser.H>
 #include <FL/fl_draw.H>
 #include <FL/Fl_RGB_Image.H>
 
@@ -42,6 +43,16 @@ struct LoadedImage {
   std::vector<unsigned char> rgb;
 };
 
+struct DecodedImage {
+  std::vector<LoadedImage> frames;
+  std::vector<int> delays_ms;
+  int loop_count = 0;  // 0 means infinite.
+
+  bool is_animated() const { return frames.size() > 1; }
+  int width() const { return frames.empty() ? 0 : frames[0].w; }
+  int height() const { return frames.empty() ? 0 : frames[0].h; }
+};
+
 struct FileMetadata {
   std::filesystem::path path;
   std::string mime;
@@ -50,42 +61,57 @@ struct FileMetadata {
   int height = 0;
 };
 
-bool load_image_rgb(const char* path, LoadedImage& out, std::string& err_out) {
-  int err = 0;
-  Imlib_Image im = imlib_load_image_with_errno_return(path, &err);
-  if (!im) {
-    const char* err_str = imlib_strerror(err);
-    err_out = err_str ? err_str : "unknown load error";
-    return false;
+int normalize_frame_delay_ms(int delay_ms) {
+  if (delay_ms <= 0) {
+    return 100;
   }
+  return std::clamp(delay_ms, 20, 10000);
+}
 
-  imlib_context_set_image(im);
-  out.w = imlib_image_get_width();
-  out.h = imlib_image_get_height();
+struct RawImage {
+  int w = 0;
+  int h = 0;
+  std::vector<DATA32> argb;
+};
 
-  if (out.w <= 0 || out.h <= 0) {
-    imlib_free_image();
-    return false;
-  }
+inline DATA32 alpha_blend_argb(DATA32 dst, DATA32 src) {
+  const unsigned int sa = (src >> 24) & 0xff;
+  if (sa == 255) return src;
+  if (sa == 0) return dst;
 
-  DATA32* data = imlib_image_get_data_for_reading_only();
-  if (!data) {
-    err_out = "decoder returned no pixel data";
-    imlib_free_image();
-    return false;
-  }
+  const unsigned int sr = (src >> 16) & 0xff;
+  const unsigned int sg = (src >> 8) & 0xff;
+  const unsigned int sb = src & 0xff;
 
-  out.rgb.resize(static_cast<size_t>(out.w) * static_cast<size_t>(out.h) * 3u);
-  for (int y = 0; y < out.h; ++y) {
-    for (int x = 0; x < out.w; ++x) {
-      DATA32 px = data[y * out.w + x];
-      size_t i = (static_cast<size_t>(y) * static_cast<size_t>(out.w) + static_cast<size_t>(x)) * 3u;
+  const unsigned int da = (dst >> 24) & 0xff;
+  const unsigned int dr = (dst >> 16) & 0xff;
+  const unsigned int dg = (dst >> 8) & 0xff;
+  const unsigned int db = dst & 0xff;
+
+  const unsigned int inv_sa = 255 - sa;
+  const unsigned int oa = sa + (da * inv_sa + 127) / 255;
+  const unsigned int or_ = sr + (dr * inv_sa + 127) / 255;
+  const unsigned int og = sg + (dg * inv_sa + 127) / 255;
+  const unsigned int ob = sb + (db * inv_sa + 127) / 255;
+
+  return static_cast<DATA32>(((oa & 0xff) << 24) | ((or_ & 0xff) << 16) |
+                             ((og & 0xff) << 8) | (ob & 0xff));
+}
+
+void argb_to_checkerboard_rgb(const std::vector<DATA32>& argb, int w, int h, LoadedImage& out) {
+  out.w = w;
+  out.h = h;
+  out.rgb.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 3u);
+
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      const DATA32 px = argb[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)];
+      const size_t i = (static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 3u;
       const unsigned int a = (px >> 24) & 0xff;
       const unsigned int r = (px >> 16) & 0xff;
       const unsigned int g = (px >> 8) & 0xff;
       const unsigned int b = px & 0xff;
 
-      // Checkerboard tile under transparency.
       constexpr int kTile = 12;
       constexpr unsigned int kLight = 210;
       constexpr unsigned int kDark = 165;
@@ -97,16 +123,164 @@ bool load_image_rgb(const char* path, LoadedImage& out, std::string& err_out) {
       out.rgb[i + 2] = static_cast<unsigned char>((b * a + cb * (255 - a)) / 255);
     }
   }
+}
 
+bool read_current_imlib_image_raw(RawImage& out, std::string& err_out) {
+  out.w = imlib_image_get_width();
+  out.h = imlib_image_get_height();
+
+  if (out.w <= 0 || out.h <= 0) {
+    err_out = "invalid decoded image dimensions";
+    return false;
+  }
+
+  const DATA32* data = imlib_image_get_data_for_reading_only();
+  if (!data) {
+    err_out = "decoder returned no pixel data";
+    return false;
+  }
+
+  const size_t n = static_cast<size_t>(out.w) * static_cast<size_t>(out.h);
+  out.argb.assign(data, data + n);
+  return true;
+}
+
+bool load_image_decoded(const char* path, DecodedImage& out, std::string& err_out) {
+  out = {};
+
+  // Try multiframe path first; if unsupported, we will fall back to regular load below.
+  Imlib_Image first = imlib_load_image_frame(path, 1);
+  if (first) {
+    imlib_context_set_image(first);
+    RawImage raw0;
+    if (!read_current_imlib_image_raw(raw0, err_out)) {
+      imlib_free_image();
+      return false;
+    }
+
+    Imlib_Frame_Info info = {};
+    imlib_image_get_frame_info(&info);
+    const int frame_count = std::max(1, info.frame_count);
+    out.loop_count = info.loop_count;
+
+    const int canvas_w = (info.canvas_w > 0) ? info.canvas_w : raw0.w;
+    const int canvas_h = (info.canvas_h > 0) ? info.canvas_h : raw0.h;
+    std::vector<DATA32> canvas(static_cast<size_t>(canvas_w) * static_cast<size_t>(canvas_h), 0);
+    std::vector<DATA32> saved_canvas;
+    bool have_saved_canvas = false;
+
+    auto decode_frame = [&](int frame_num, RawImage& raw, Imlib_Frame_Info& finfo) -> bool {
+      Imlib_Image frame_im = (frame_num == 1) ? first : imlib_load_image_frame(path, frame_num);
+      if (!frame_im) return false;
+      imlib_context_set_image(frame_im);
+      bool ok = read_current_imlib_image_raw(raw, err_out);
+      if (ok) {
+        finfo = {};
+        imlib_image_get_frame_info(&finfo);
+      }
+      if (frame_num != 1) {
+        imlib_free_image();
+      }
+      return ok;
+    };
+
+    for (int frame_num = 1; frame_num <= frame_count; ++frame_num) {
+      RawImage raw;
+      Imlib_Frame_Info finfo = {};
+      if (!decode_frame(frame_num, raw, finfo)) {
+        break;
+      }
+
+      const int fx = std::clamp(finfo.frame_x, 0, canvas_w);
+      const int fy = std::clamp(finfo.frame_y, 0, canvas_h);
+      const int default_fw = (raw.w == canvas_w && raw.h == canvas_h) ? (canvas_w - fx) : raw.w;
+      const int default_fh = (raw.w == canvas_w && raw.h == canvas_h) ? (canvas_h - fy) : raw.h;
+      const int fw = std::clamp((finfo.frame_w > 0) ? finfo.frame_w : default_fw, 0, canvas_w - fx);
+      const int fh = std::clamp((finfo.frame_h > 0) ? finfo.frame_h : default_fh, 0, canvas_h - fy);
+
+      if (finfo.frame_flags & IMLIB_FRAME_DISPOSE_PREV) {
+        saved_canvas = canvas;
+        have_saved_canvas = true;
+      } else {
+        have_saved_canvas = false;
+      }
+
+      for (int y = 0; y < fh; ++y) {
+        for (int x = 0; x < fw; ++x) {
+          int sx = x;
+          int sy = y;
+          if (raw.w == canvas_w && raw.h == canvas_h) {
+            sx = fx + x;
+            sy = fy + y;
+          }
+          if (sx < 0 || sy < 0 || sx >= raw.w || sy >= raw.h) {
+            continue;
+          }
+          const size_t src_i = static_cast<size_t>(sy) * static_cast<size_t>(raw.w) + static_cast<size_t>(sx);
+          const size_t dst_i =
+              static_cast<size_t>(fy + y) * static_cast<size_t>(canvas_w) + static_cast<size_t>(fx + x);
+          const DATA32 src_px = raw.argb[src_i];
+          if (finfo.frame_flags & IMLIB_FRAME_BLEND) {
+            canvas[dst_i] = alpha_blend_argb(canvas[dst_i], src_px);
+          } else {
+            canvas[dst_i] = src_px;
+          }
+        }
+      }
+
+      LoadedImage composed;
+      argb_to_checkerboard_rgb(canvas, canvas_w, canvas_h, composed);
+      out.frames.push_back(std::move(composed));
+      out.delays_ms.push_back(normalize_frame_delay_ms(finfo.frame_delay));
+
+      if (finfo.frame_flags & IMLIB_FRAME_DISPOSE_CLEAR) {
+        for (int y = 0; y < fh; ++y) {
+          const size_t row = static_cast<size_t>(fy + y) * static_cast<size_t>(canvas_w);
+          for (int x = 0; x < fw; ++x) {
+            canvas[row + static_cast<size_t>(fx + x)] = 0;
+          }
+        }
+      } else if ((finfo.frame_flags & IMLIB_FRAME_DISPOSE_PREV) && have_saved_canvas) {
+        canvas = saved_canvas;
+      }
+    }
+
+    imlib_context_set_image(first);
+    imlib_free_image();
+
+    if (!out.frames.empty()) {
+      return true;
+    }
+  }
+
+  int err = 0;
+  Imlib_Image im = imlib_load_image_with_errno_return(path, &err);
+  if (!im) {
+    const char* err_str = imlib_strerror(err);
+    err_out = err_str ? err_str : "unknown load error";
+    return false;
+  }
+
+  imlib_context_set_image(im);
+  RawImage raw;
+  if (!read_current_imlib_image_raw(raw, err_out)) {
+    imlib_free_image();
+    return false;
+  }
   imlib_free_image();
+
+  LoadedImage still;
+  argb_to_checkerboard_rgb(raw.argb, raw.w, raw.h, still);
+  out.frames.push_back(std::move(still));
+  out.delays_ms.push_back(0);
   return true;
 }
 
 class ImageView : public Fl_Widget {
  public:
-  ImageView(int X, int Y, int W, int H, LoadedImage image)
-      : Fl_Widget(X, Y, W, H), image_(std::move(image)) {
-    sync_image_pointers();
+  ImageView(int X, int Y, int W, int H, LoadedImage image = {})
+      : Fl_Widget(X, Y, W, H) {
+    set_image(std::move(image));
   }
 
   void set_navigate_callback(std::function<bool(int)> cb) { navigate_cb_ = std::move(cb); }
@@ -114,15 +288,61 @@ class ImageView : public Fl_Widget {
   void set_reload_callback(std::function<void()> cb) { reload_cb_ = std::move(cb); }
   void set_open_gimp_callback(std::function<void()> cb) { open_gimp_cb_ = std::move(cb); }
   void set_open_inkscape_callback(std::function<void()> cb) { open_inkscape_cb_ = std::move(cb); }
+  void set_open_file_callback(std::function<void()> cb) { open_file_cb_ = std::move(cb); }
   void set_external_app_availability(bool gimp_available, bool inkscape_available) {
     gimp_available_ = gimp_available;
     inkscape_available_ = inkscape_available;
   }
 
   void set_image(LoadedImage image) {
+    stop_animation();
+    animation_frames_.clear();
+    animation_delays_ms_.clear();
+    animation_frame_index_ = 0;
+    animation_loop_count_ = 0;
+    animation_loops_done_ = 0;
+
     image_ = std::move(image);
+    has_image_ = (image_.w > 0 && image_.h > 0 && !image_.rgb.empty());
     sync_image_pointers();
     reset_zoom();
+    redraw();
+  }
+
+  void set_animation(std::vector<LoadedImage> frames, std::vector<int> delays_ms, int loop_count) {
+    stop_animation();
+    image_ = {};
+    animation_frames_ = std::move(frames);
+    animation_delays_ms_ = std::move(delays_ms);
+    if (animation_delays_ms_.size() < animation_frames_.size()) {
+      animation_delays_ms_.resize(animation_frames_.size(), 100);
+    }
+    animation_frame_index_ = 0;
+    animation_loops_done_ = 0;
+    animation_loop_count_ = std::max(0, loop_count);
+    has_image_ = !animation_frames_.empty();
+    sync_image_pointers();
+    reset_zoom();
+    if (animation_frames_.size() > 1) {
+      schedule_animation_for_current_frame();
+    }
+    redraw();
+  }
+
+  bool has_image() const { return has_image_; }
+
+  void clear_image() {
+    stop_animation();
+    image_ = {};
+    animation_frames_.clear();
+    animation_delays_ms_.clear();
+    animation_frame_index_ = 0;
+    animation_loop_count_ = 0;
+    animation_loops_done_ = 0;
+    has_image_ = false;
+    sync_image_pointers();
+    clear_pan_keys();
+    redraw();
   }
 
   int handle(int event) override {
@@ -169,6 +389,9 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_KEYDOWN:
       case FL_SHORTCUT:
+        if (handle_open_shortcut()) {
+          return 1;
+        }
         if (handle_reload_shortcut()) {
           return 1;
         }
@@ -219,6 +442,17 @@ class ImageView : public Fl_Widget {
     fl_color(fl_rgb_color(30, 30, 30));
     fl_rectf(x(), y(), w(), h());
 
+    if (!has_image_) {
+      const char* hint = "Press O / Ctrl+O or right-click -> Open Image...";
+      fl_color(fl_rgb_color(220, 220, 220));
+      fl_font(FL_HELVETICA, 16);
+      int tw = 0, th = 0;
+      fl_measure(hint, tw, th, 0);
+      fl_draw(hint, x() + (w() - tw) / 2, y() + (h() + th) / 2);
+      fl_pop_clip();
+      return;
+    }
+
     const int draw_w = scaled_w();
     const int draw_h = scaled_h();
     clamp_offsets();
@@ -233,7 +467,10 @@ class ImageView : public Fl_Widget {
     fl_pop_clip();
   }
 
-  ~ImageView() override { stop_pan_timer(); }
+  ~ImageView() override {
+    stop_animation();
+    stop_pan_timer();
+  }
 
  private:
   static void pan_timer_cb(void* userdata) {
@@ -244,6 +481,58 @@ class ImageView : public Fl_Widget {
     } else {
       self->pan_timer_active_ = false;
     }
+  }
+
+  static void animation_timer_cb(void* userdata) {
+    auto* self = static_cast<ImageView*>(userdata);
+    self->animation_timer_active_ = false;
+    self->advance_animation_frame();
+  }
+
+  void schedule_animation_for_current_frame() {
+    if (!has_image_ || animation_frames_.size() <= 1) {
+      return;
+    }
+    if (animation_frame_index_ >= animation_delays_ms_.size()) {
+      return;
+    }
+    const int delay_ms = normalize_frame_delay_ms(animation_delays_ms_[animation_frame_index_]);
+    animation_timer_active_ = true;
+    Fl::add_timeout(static_cast<double>(delay_ms) / 1000.0, animation_timer_cb, this);
+  }
+
+  void stop_animation() {
+    if (animation_timer_active_) {
+      Fl::remove_timeout(animation_timer_cb, this);
+      animation_timer_active_ = false;
+    }
+  }
+
+  void advance_animation_frame() {
+    if (!has_image_ || animation_frames_.size() <= 1) {
+      return;
+    }
+
+    size_t next = animation_frame_index_ + 1;
+    if (next >= animation_frames_.size()) {
+      if (animation_loop_count_ > 0) {
+        ++animation_loops_done_;
+        if (animation_loops_done_ >= animation_loop_count_) {
+          animation_frame_index_ = animation_frames_.size() - 1;
+          sync_image_pointers();
+          clamp_offsets();
+          redraw();
+          return;
+        }
+      }
+      next = 0;
+    }
+
+    animation_frame_index_ = next;
+    sync_image_pointers();
+    clamp_offsets();
+    redraw();
+    schedule_animation_for_current_frame();
   }
 
   bool set_pan_key_state(int key, bool down) {
@@ -288,6 +577,7 @@ class ImageView : public Fl_Widget {
   }
 
   void pan_tick() {
+    if (!has_image_) return;
     const int vx = (pan_d_ ? 1 : 0) - (pan_a_ ? 1 : 0);
     const int vy = (pan_s_ ? 1 : 0) - (pan_w_ ? 1 : 0);
     if (vx == 0 && vy == 0) {
@@ -306,6 +596,7 @@ class ImageView : public Fl_Widget {
   int viewport_h() const { return std::max(1, h() - 2 * kPadding); }
 
   double fit_scale() const {
+    if (!has_image_) return 1.0;
     const double sx = static_cast<double>(viewport_w()) / static_cast<double>(src_w_);
     const double sy = static_cast<double>(viewport_h()) / static_cast<double>(src_h_);
     return std::min(1.0, std::min(sx, sy));
@@ -338,6 +629,7 @@ class ImageView : public Fl_Widget {
   }
 
   void draw_visible_region() {
+    if (!has_image_) return;
     const int vw = viewport_w();
     const int vh = viewport_h();
     const int sw = scaled_w();
@@ -381,18 +673,20 @@ class ImageView : public Fl_Widget {
   }
 
   void show_context_menu(int screen_x, int screen_y) {
+    const int image_flags = has_image_ ? 0 : FL_MENU_INACTIVE;
     const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
     const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
-    Fl_Menu_Item items[10] = {};
-    items[0] = {"Copy", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[1] = {"Reload", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[2] = {"Previous File", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[3] = {"Next File", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[4] = {"Zoom Out", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[5] = {"Zoom In", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[6] = {"Zoom Reset", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[7] = {"Open with GIMP", 0, nullptr, nullptr, gimp_flags, 0, 0, 0, 0};
-    items[8] = {"Open with Inkscape", 0, nullptr, nullptr, inkscape_flags, 0, 0, 0, 0};
+    Fl_Menu_Item items[11] = {};
+    items[0] = {"Copy", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[1] = {"Reload", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[2] = {"Previous File", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[3] = {"Next File", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[4] = {"Zoom In", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[5] = {"Zoom Out", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[6] = {"Zoom Reset", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[7] = {"Open Image...", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[8] = {"Open with GIMP", 0, nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
+    items[9] = {"Open with Inkscape", 0, nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
 
     const Fl_Menu_Item* chosen = items->popup(screen_x, screen_y);
     if (!chosen) return;
@@ -406,14 +700,16 @@ class ImageView : public Fl_Widget {
     } else if (chosen == &items[3]) {
       if (navigate_cb_) (void)navigate_cb_(1);
     } else if (chosen == &items[4]) {
-      zoom_by(1.0 / kZoomStep, viewport_w() / 2, viewport_h() / 2);
-    } else if (chosen == &items[5]) {
       zoom_by(kZoomStep, viewport_w() / 2, viewport_h() / 2);
+    } else if (chosen == &items[5]) {
+      zoom_by(1.0 / kZoomStep, viewport_w() / 2, viewport_h() / 2);
     } else if (chosen == &items[6]) {
       reset_zoom();
     } else if (chosen == &items[7]) {
-      if (open_gimp_cb_) open_gimp_cb_();
+      if (open_file_cb_) open_file_cb_();
     } else if (chosen == &items[8]) {
+      if (open_gimp_cb_) open_gimp_cb_();
+    } else if (chosen == &items[9]) {
       if (open_inkscape_cb_) open_inkscape_cb_();
     }
   }
@@ -478,6 +774,17 @@ class ImageView : public Fl_Widget {
     return false;
   }
 
+  bool handle_open_shortcut() {
+    const int key = Fl::event_key();
+    if (key == 'o' || key == 'O' || ((Fl::event_state() & FL_CTRL) && key == ('o' & 0x1f))) {
+      if (open_file_cb_) {
+        open_file_cb_();
+      }
+      return true;
+    }
+    return false;
+  }
+
   bool handle_external_open_shortcuts() {
     const int key = Fl::event_key();
     const bool ctrl = (Fl::event_state() & FL_CTRL) != 0;
@@ -502,6 +809,7 @@ class ImageView : public Fl_Widget {
   }
 
   void pan_view_by(int dx, int dy) {
+    if (!has_image_) return;
     const int old_x = img_x_;
     const int old_y = img_y_;
     img_x_ -= dx;
@@ -513,6 +821,7 @@ class ImageView : public Fl_Widget {
   }
 
   void pan_image_by(int dx, int dy) {
+    if (!has_image_) return;
     const int old_x = img_x_;
     const int old_y = img_y_;
     img_x_ += dx;
@@ -524,6 +833,7 @@ class ImageView : public Fl_Widget {
   }
 
   void zoom_by(double factor, int anchor_x, int anchor_y) {
+    if (!has_image_) return;
     const double old_scale = current_scale();
     const double next_zoom = std::clamp(zoom_ * factor, kZoomMin, kZoomMax);
     if (next_zoom == zoom_) {
@@ -554,13 +864,28 @@ class ImageView : public Fl_Widget {
   }
 
   void sync_image_pointers() {
-    src_pixels_ = image_.rgb.data();
-    src_w_ = image_.w;
-    src_h_ = image_.h;
+    if (!animation_frames_.empty()) {
+      const size_t idx = std::min(animation_frame_index_, animation_frames_.size() - 1);
+      const LoadedImage& cur = animation_frames_[idx];
+      src_pixels_ = cur.rgb.data();
+      src_w_ = cur.w;
+      src_h_ = cur.h;
+    } else {
+      src_pixels_ = image_.rgb.data();
+      src_w_ = image_.w;
+      src_h_ = image_.h;
+    }
     scaled_view_.clear();
   }
 
   LoadedImage image_;
+  std::vector<LoadedImage> animation_frames_;
+  std::vector<int> animation_delays_ms_;
+  size_t animation_frame_index_ = 0;
+  int animation_loop_count_ = 0;
+  int animation_loops_done_ = 0;
+  bool animation_timer_active_ = false;
+  bool has_image_ = false;
   const unsigned char* src_pixels_ = nullptr;
   int src_w_ = 0;
   int src_h_ = 0;
@@ -579,6 +904,7 @@ class ImageView : public Fl_Widget {
   std::function<bool(int)> navigate_cb_;
   std::function<void()> copy_cb_;
   std::function<void()> reload_cb_;
+  std::function<void()> open_file_cb_;
   std::function<void()> open_gimp_cb_;
   std::function<void()> open_inkscape_cb_;
   bool gimp_available_ = false;
@@ -672,7 +998,7 @@ void print_formats() {
 }
 
 void print_usage(const char* argv0) {
-  std::fprintf(stderr, "Usage: %s <image-file>\n", argv0);
+  std::fprintf(stderr, "Usage: %s [image-file]\n", argv0);
   std::fprintf(stderr, "       %s --list-formats\n", argv0);
 }
 
@@ -805,9 +1131,36 @@ std::string human_size(uintmax_t bytes) {
 }
 
 std::string make_status_text(const FileMetadata& meta) {
+  if (meta.path.empty()) {
+    return "No image loaded | Press O / Ctrl+O or right-click -> Open Image...";
+  }
   return meta.path.filename().string() + " | " + meta.mime + " | " +
          human_size(meta.size_bytes) + " | " +
          std::to_string(meta.width) + "x" + std::to_string(meta.height);
+}
+
+bool pick_image_file(std::filesystem::path& out_file, const std::filesystem::path& start_dir) {
+  Fl_Native_File_Chooser chooser;
+  chooser.title("Open Image");
+  chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+  chooser.filter(
+      "Images\t*.{avif,bmp,gif,heic,heif,ico,j2k,jp2,jpeg,jpg,jxl,pbm,pgm,png,pnm,ppm,qoi,svg,tga,tif,tiff,webp,xbm,xpm}\n"
+      "All Files\t*");
+  if (!start_dir.empty()) {
+    chooser.directory(start_dir.string().c_str());
+  }
+
+  const int rc = chooser.show();
+  if (rc != 0) {
+    return false;
+  }
+
+  const char* selected = chooser.filename();
+  if (!selected || !selected[0]) {
+    return false;
+  }
+  out_file = std::filesystem::absolute(std::filesystem::path(selected)).lexically_normal();
+  return true;
 }
 
 }  // namespace
@@ -817,8 +1170,7 @@ int main(int argc, char** argv) {
     print_formats();
     return 0;
   }
-
-  if (argc < 2) {
+  if (argc > 2) {
     print_usage(argv[0]);
     return 1;
   }
@@ -828,27 +1180,34 @@ int main(int argc, char** argv) {
   constexpr unsigned char kBgB = 30;
 
   namespace fs = std::filesystem;
-  fs::path current_file = fs::absolute(fs::path(argv[1])).lexically_normal();
-  fs::path current_dir = current_file.parent_path();
-  FileMetadata current_meta = build_file_metadata(current_file);
-  std::vector<fs::path> dir_files = list_directory_files(current_dir);
-
+  fs::path current_file;
+  fs::path current_dir = fs::current_path();
+  FileMetadata current_meta;
+  std::vector<fs::path> dir_files;
   size_t current_index = 0;
-  for (size_t i = 0; i < dir_files.size(); ++i) {
-    if (fs::absolute(dir_files[i]).lexically_normal() == current_file) {
-      current_index = i;
-      break;
-    }
-  }
 
-  LoadedImage loaded;
-  std::string load_err;
-  if (!load_image_rgb(current_file.string().c_str(), loaded, load_err)) {
-    std::fprintf(stderr, "Failed to load image: %s (%s)\n", current_file.string().c_str(), load_err.c_str());
-    return 2;
+  DecodedImage decoded;
+  bool have_initial_image = false;
+  if (argc >= 2) {
+    current_file = fs::absolute(fs::path(argv[1])).lexically_normal();
+    current_dir = current_file.parent_path();
+    std::string load_err;
+    if (!load_image_decoded(current_file.string().c_str(), decoded, load_err)) {
+      std::fprintf(stderr, "Failed to load image: %s (%s)\n", current_file.string().c_str(), load_err.c_str());
+      return 2;
+    }
+    current_meta = build_file_metadata(current_file);
+    current_meta.width = decoded.width();
+    current_meta.height = decoded.height();
+    dir_files = list_directory_files(current_dir);
+    for (size_t i = 0; i < dir_files.size(); ++i) {
+      if (fs::absolute(dir_files[i]).lexically_normal() == current_file) {
+        current_index = i;
+        break;
+      }
+    }
+    have_initial_image = true;
   }
-  current_meta.width = loaded.w;
-  current_meta.height = loaded.h;
  
   int sx = 0;
   int sy = 0;
@@ -856,17 +1215,17 @@ int main(int argc, char** argv) {
   int sh = 0;
   Fl::screen_xywh(sx, sy, sw, sh, 0);
 
-  const int wanted_w = loaded.w + 2 * kPadding;
-  const int wanted_h = loaded.h + 2 * kPadding;
+  const int wanted_w = have_initial_image ? (decoded.width() + 2 * kPadding) : 960;
+  const int wanted_h = have_initial_image ? (decoded.height() + 2 * kPadding + kStatusBarH) : 720;
 
   const int win_w = std::clamp(wanted_w, kMinWindowW, static_cast<int>(sw * 0.9));
   const int win_h = std::clamp(wanted_h, kMinWindowH, static_cast<int>(sh * 0.9));
 
-  const std::string title = make_title(current_file);
+  const std::string title = have_initial_image ? make_title(current_file) : "fliv";
   AppWindow win(win_w, win_h, title.c_str());
   win.begin();
   win.color(fl_rgb_color(kBgR, kBgG, kBgB));
-  ImageView view(0, 0, win_w, std::max(1, win_h - kStatusBarH), std::move(loaded));
+  ImageView view(0, 0, win_w, std::max(1, win_h - kStatusBarH), LoadedImage{});
   Fl_Box status(0, std::max(0, win_h - kStatusBarH), win_w, kStatusBarH);
   win.set_layout_widgets(&view, &status);
   status.box(FL_FLAT_BOX);
@@ -879,26 +1238,59 @@ int main(int argc, char** argv) {
   win.resizable(&view);
   view.set_external_app_availability(command_exists("gimp"), command_exists("inkscape"));
 
+  auto apply_decoded_to_view = [&](DecodedImage&& media) {
+    if (media.is_animated()) {
+      view.set_animation(std::move(media.frames), std::move(media.delays_ms), media.loop_count);
+    } else if (!media.frames.empty()) {
+      view.set_image(std::move(media.frames[0]));
+    } else {
+      view.clear_image();
+    }
+  };
+
+  if (have_initial_image) {
+    apply_decoded_to_view(std::move(decoded));
+  }
+
+  auto load_and_apply = [&](const fs::path& file_to_open, bool refresh_dir) -> bool {
+    DecodedImage next;
+    std::string err;
+    const fs::path abs = fs::absolute(file_to_open).lexically_normal();
+    if (!load_image_decoded(abs.string().c_str(), next, err)) {
+      std::fprintf(stderr, "Failed to load image: %s (%s)\n", abs.string().c_str(), err.c_str());
+      return false;
+    }
+
+    current_file = abs;
+    current_meta = build_file_metadata(current_file);
+    current_meta.width = next.width();
+    current_meta.height = next.height();
+    if (refresh_dir) {
+      current_dir = current_file.parent_path();
+      dir_files = list_directory_files(current_dir);
+      current_index = 0;
+      for (size_t i = 0; i < dir_files.size(); ++i) {
+        if (fs::absolute(dir_files[i]).lexically_normal() == current_file) {
+          current_index = i;
+          break;
+        }
+      }
+    }
+    win.copy_label(make_title(current_file).c_str());
+    status.copy_label(make_status_text(current_meta).c_str());
+    apply_decoded_to_view(std::move(next));
+    return true;
+  };
+
   view.set_navigate_callback([&](int dir) -> bool {
-    if (dir_files.empty()) {
+    if (current_file.empty() || dir_files.empty()) {
       return false;
     }
 
     for (int i = static_cast<int>(current_index) + dir;
          i >= 0 && i < static_cast<int>(dir_files.size()); i += dir) {
-      LoadedImage next;
-      std::string err;
       const std::string candidate = dir_files[static_cast<size_t>(i)].string();
-      if (load_image_rgb(candidate.c_str(), next, err)) {
-        current_index = static_cast<size_t>(i);
-        current_file = fs::absolute(dir_files[current_index]).lexically_normal();
-        current_meta = build_file_metadata(current_file);
-        current_meta.width = next.w;
-        current_meta.height = next.h;
-        const std::string new_title = make_title(current_file);
-        win.copy_label(new_title.c_str());
-        status.copy_label(make_status_text(current_meta).c_str());
-        view.set_image(std::move(next));
+      if (load_and_apply(candidate, true)) {
         return true;
       }
     }
@@ -906,6 +1298,7 @@ int main(int argc, char** argv) {
   });
 
   view.set_copy_callback([&]() {
+    if (current_file.empty()) return;
     if (!copy_file_to_clipboard(current_meta)) {
       std::fprintf(stderr,
                    "Copy failed for %s (need wl-copy on Wayland or xclip on X11)\n",
@@ -913,21 +1306,22 @@ int main(int argc, char** argv) {
     }
   });
   view.set_reload_callback([&]() {
-    LoadedImage refreshed;
-    std::string err;
-    if (!load_image_rgb(current_file.string().c_str(), refreshed, err)) {
-      std::fprintf(stderr, "Reload failed: %s (%s)\n", current_file.string().c_str(), err.c_str());
-      return;
-    }
-    current_meta = build_file_metadata(current_file);
-    current_meta.width = refreshed.w;
-    current_meta.height = refreshed.h;
-    status.copy_label(make_status_text(current_meta).c_str());
-    view.set_image(std::move(refreshed));
+    if (current_file.empty()) return;
+    (void)load_and_apply(current_file, true);
   });
-  view.set_open_gimp_callback([&]() { (void)launch_app_if_available("gimp", current_meta.path); });
+  view.set_open_file_callback([&]() {
+    fs::path selected;
+    if (pick_image_file(selected, current_dir)) {
+      (void)load_and_apply(selected, true);
+    }
+  });
+  view.set_open_gimp_callback([&]() {
+    if (!current_file.empty()) (void)launch_app_if_available("gimp", current_meta.path);
+  });
   view.set_open_inkscape_callback(
-      [&]() { (void)launch_app_if_available("inkscape", current_meta.path); });
+      [&]() {
+        if (!current_file.empty()) (void)launch_app_if_available("inkscape", current_meta.path);
+      });
 
   win.end();
   win.show();

@@ -15,16 +15,21 @@ make
 ```
 
 ```bash
+./fliv
+```
+
+```bash
 ./fliv --list-formats
 ```
 
 ## Current behavior
 
-- Loads one image using imlib2.
+- Loads images via imlib2 (including multiframe/animated files when supported by loader).
 - Opens a resizable FLTK window.
 - Draws the image centered with padding and a simple frame.
 - Scales down to fit the window if needed.
 - Transparency is composited onto a checkerboard background.
+- Animated/multiframe images auto-play using per-frame delays from imlib2 frame info.
 - Zoom controls:
 - `Ctrl` + `+` or `Ctrl` + `=`: zoom in
 - `Ctrl` + `-`: zoom out
@@ -38,10 +43,12 @@ make
 - `Left` / `Right`: previous/next decodable file in the current directory.
 - Unsupported/unreadable files are skipped automatically.
 - `r` or `Ctrl+R`: reload current image from disk.
+- `o` or `Ctrl+O`: open image file picker.
 - `c` or `Ctrl+C`: copy current image file to clipboard (`wl-copy` on Wayland, `xclip` on X11).
 - `g` or `Ctrl+G`: open current image in GIMP (if installed).
 - `i` or `Ctrl+I`: open current image in Inkscape (if installed).
-- Right-click menu: Copy, Reload, Previous/Next File, Zoom Out/In/Reset, Open with GIMP, Open with Inkscape.
+- Program can start with no input image; empty state shows an open hint and accepts open shortcut/menu.
+- Right-click menu: Copy, Reload, Previous/Next File, Zoom In/Out/Reset, Open Image, Open with GIMP, Open with Inkscape.
 - GIMP/Inkscape menu entries are disabled if the app is unavailable at startup.
 - Bottom status bar shows: filename, mime type, human-readable file size, and dimensions.
 
