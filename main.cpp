@@ -37,10 +37,12 @@ constexpr int kMinWindowW = 240;
 constexpr int kMinWindowH = 180;
 constexpr int kStatusBarH = 24;
 constexpr double kZoomStep = 1.10;
+constexpr double kZoomHoldStep = 1.03;
 constexpr double kZoomMin = 0.05;
 constexpr double kZoomMax = 40.0;
-constexpr int kPanStep = 24;
+constexpr int kPanStep = 20;
 constexpr double kPanTickSeconds = 1.0 / 30.0;
+constexpr double kZoomTickSeconds = 1.0 / 30.0;
 constexpr const char* kLoaderDirs[] = {
     "/usr/lib/imlib2/loaders",
     "/usr/lib64/imlib2/loaders",
@@ -676,6 +678,7 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_UNFOCUS:
         clear_pan_keys();
+        clear_zoom_keys();
         return 1;
       case FL_PUSH:
         take_focus();
@@ -743,6 +746,15 @@ class ImageView : public Fl_Widget {
             }
             return 1;  // swallow repeats; timer is the single pan driver
           }
+          const bool is_zoom = is_zoom_hold_key(key);
+          const bool zoom_changed = set_zoom_key_state(key, true);
+          if (is_zoom) {
+            if (zoom_changed) {
+              zoom_tick();
+              ensure_zoom_timer();
+            }
+            return 1;  // swallow repeats; timer is the single zoom driver
+          }
         }
         if (handle_copy_shortcut()) {
           return 1;
@@ -755,10 +767,17 @@ class ImageView : public Fl_Widget {
         }
         break;
       case FL_KEYUP: {
-        const bool changed = set_pan_key_state(Fl::event_key(), false);
-        if (changed) {
+        const bool pan_changed = set_pan_key_state(Fl::event_key(), false);
+        if (pan_changed) {
           if (!any_pan_key_pressed()) {
             stop_pan_timer();
+          }
+          return 1;
+        }
+        const bool zoom_changed = set_zoom_key_state(Fl::event_key(), false);
+        if (zoom_changed) {
+          if (!any_zoom_key_pressed()) {
+            stop_zoom_timer();
           }
           return 1;
         }
@@ -801,6 +820,7 @@ class ImageView : public Fl_Widget {
   ~ImageView() override {
     stop_animation();
     stop_pan_timer();
+    stop_zoom_timer();
   }
 
  private:
@@ -818,6 +838,16 @@ class ImageView : public Fl_Widget {
     auto* self = static_cast<ImageView*>(userdata);
     self->animation_timer_active_ = false;
     self->advance_animation_frame();
+  }
+
+  static void zoom_timer_cb(void* userdata) {
+    auto* self = static_cast<ImageView*>(userdata);
+    self->zoom_tick();
+    if (self->any_zoom_key_pressed()) {
+      Fl::repeat_timeout(kZoomTickSeconds, zoom_timer_cb, userdata);
+    } else {
+      self->zoom_timer_active_ = false;
+    }
   }
 
   void schedule_animation_for_current_frame() {
@@ -870,10 +900,40 @@ class ImageView : public Fl_Widget {
   }
 
   bool any_pan_key_pressed() const { return pan_w_ || pan_a_ || pan_s_ || pan_d_; }
+  bool any_zoom_key_pressed() const { return zoom_in_ || zoom_out_; }
 
   void clear_pan_keys() {
     pan_w_ = pan_a_ = pan_s_ = pan_d_ = false;
     stop_pan_timer();
+  }
+
+  bool set_zoom_key_state(int key, bool down) {
+    bool* slot = nullptr;
+    if (key == 'e' || key == 'E' || key == '+' || key == '=' || key == (FL_KP + '+')) {
+      slot = &zoom_in_;
+    } else if (key == 'q' || key == 'Q' || key == '-' || key == '_' || key == (FL_KP + '-')) {
+      slot = &zoom_out_;
+    } else {
+      return false;
+    }
+
+    if (*slot == down) {
+      return false;
+    }
+    *slot = down;
+    return true;
+  }
+
+  static bool is_zoom_hold_key(int key) {
+    return key == 'e' || key == 'E' || key == 'q' || key == 'Q' ||
+           key == '+' || key == '=' || key == '-' || key == '_' ||
+           key == (FL_KP + '+') || key == (FL_KP + '-');
+  }
+
+  void clear_zoom_keys() {
+    zoom_in_ = false;
+    zoom_out_ = false;
+    stop_zoom_timer();
   }
 
   void ensure_pan_timer() {
@@ -890,6 +950,20 @@ class ImageView : public Fl_Widget {
     }
   }
 
+  void ensure_zoom_timer() {
+    if (!zoom_timer_active_) {
+      zoom_timer_active_ = true;
+      Fl::add_timeout(kZoomTickSeconds, zoom_timer_cb, this);
+    }
+  }
+
+  void stop_zoom_timer() {
+    if (zoom_timer_active_) {
+      Fl::remove_timeout(zoom_timer_cb, this);
+      zoom_timer_active_ = false;
+    }
+  }
+
   void pan_tick() {
     if (!has_image_) return;
     const int vx = (pan_d_ ? 1 : 0) - (pan_a_ ? 1 : 0);
@@ -902,6 +976,16 @@ class ImageView : public Fl_Widget {
     const int dx = static_cast<int>(std::lround(static_cast<double>(kPanStep) * vx / len));
     const int dy = static_cast<int>(std::lround(static_cast<double>(kPanStep) * vy / len));
     pan_view_by(dx, dy);
+  }
+
+  void zoom_tick() {
+    if (!has_image_) return;
+    const int vz = (zoom_in_ ? 1 : 0) - (zoom_out_ ? 1 : 0);
+    if (vz == 0) {
+      return;
+    }
+    const double factor = (vz > 0) ? kZoomHoldStep : (1.0 / kZoomHoldStep);
+    zoom_by(factor, viewport_w() / 2, viewport_h() / 2);
   }
 
   int viewport_x() const { return x() + kPadding; }
@@ -1331,6 +1415,9 @@ class ImageView : public Fl_Widget {
   bool pan_s_ = false;
   bool pan_d_ = false;
   bool pan_timer_active_ = false;
+  bool zoom_in_ = false;
+  bool zoom_out_ = false;
+  bool zoom_timer_active_ = false;
   std::function<bool(int)> navigate_cb_;
   std::function<void()> copy_cb_;
   std::function<void()> reload_cb_;

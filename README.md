@@ -71,13 +71,14 @@ make
 - Transparency is composited onto a checkerboard background.
 - Animated/multiframe images auto-play using per-frame delays from imlib2 frame info.
 - Zoom controls:
-- `+` or `=`: zoom in
-- `-`: zoom out
+- `+` or `=` or `e`: zoom in
+- `-` or `q`: zoom out
 - `0`: reset zoom
 - `f`: fit image to window
 - `F11`: toggle fullscreen
 - `Menu` key or `Shift+F10`: open context menu
 - Mouse wheel: zoom in/out
+- Hold `+` / `-` / `q` / `e` for smooth continuous zoom
 - `W` / `A` / `S` / `D`: pan up / left / down / right
 - WASD combinations pan diagonally.
 - Left-click drag: pan image by dragging
