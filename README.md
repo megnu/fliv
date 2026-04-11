@@ -37,10 +37,11 @@ make
 - Zoom rendering is viewport-based (only visible pixels are sampled/rendered).
 - `Left` / `Right`: previous/next decodable file in the current directory.
 - Unsupported/unreadable files are skipped automatically.
+- `r` or `Ctrl+R`: reload current image from disk.
 - `c` or `Ctrl+C`: copy current image file to clipboard (`wl-copy` on Wayland, `xclip` on X11).
 - `g` or `Ctrl+G`: open current image in GIMP (if installed).
 - `i` or `Ctrl+I`: open current image in Inkscape (if installed).
-- Right-click menu: Copy, Previous/Next File, Zoom Out/In/Reset, Open with GIMP, Open with Inkscape.
+- Right-click menu: Copy, Reload, Previous/Next File, Zoom Out/In/Reset, Open with GIMP, Open with Inkscape.
 - GIMP/Inkscape menu entries are disabled if the app is unavailable at startup.
 - Bottom status bar shows: filename, mime type, human-readable file size, and dimensions.
 

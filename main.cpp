@@ -111,6 +111,7 @@ class ImageView : public Fl_Widget {
 
   void set_navigate_callback(std::function<bool(int)> cb) { navigate_cb_ = std::move(cb); }
   void set_copy_callback(std::function<void()> cb) { copy_cb_ = std::move(cb); }
+  void set_reload_callback(std::function<void()> cb) { reload_cb_ = std::move(cb); }
   void set_open_gimp_callback(std::function<void()> cb) { open_gimp_cb_ = std::move(cb); }
   void set_open_inkscape_callback(std::function<void()> cb) { open_inkscape_cb_ = std::move(cb); }
   void set_external_app_availability(bool gimp_available, bool inkscape_available) {
@@ -168,6 +169,9 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_KEYDOWN:
       case FL_SHORTCUT:
+        if (handle_reload_shortcut()) {
+          return 1;
+        }
         if (handle_external_open_shortcuts()) {
           return 1;
         }
@@ -379,15 +383,16 @@ class ImageView : public Fl_Widget {
   void show_context_menu(int screen_x, int screen_y) {
     const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
     const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
-    Fl_Menu_Item items[9] = {};
+    Fl_Menu_Item items[10] = {};
     items[0] = {"Copy", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[1] = {"Previous File", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[2] = {"Next File", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[3] = {"Zoom Out", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[4] = {"Zoom In", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[5] = {"Zoom Reset", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[6] = {"Open with GIMP", 0, nullptr, nullptr, gimp_flags, 0, 0, 0, 0};
-    items[7] = {"Open with Inkscape", 0, nullptr, nullptr, inkscape_flags, 0, 0, 0, 0};
+    items[1] = {"Reload", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[2] = {"Previous File", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[3] = {"Next File", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[4] = {"Zoom Out", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[5] = {"Zoom In", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[6] = {"Zoom Reset", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[7] = {"Open with GIMP", 0, nullptr, nullptr, gimp_flags, 0, 0, 0, 0};
+    items[8] = {"Open with Inkscape", 0, nullptr, nullptr, inkscape_flags, 0, 0, 0, 0};
 
     const Fl_Menu_Item* chosen = items->popup(screen_x, screen_y);
     if (!chosen) return;
@@ -395,18 +400,20 @@ class ImageView : public Fl_Widget {
     if (chosen == &items[0]) {
       if (copy_cb_) copy_cb_();
     } else if (chosen == &items[1]) {
-      if (navigate_cb_) (void)navigate_cb_(-1);
+      if (reload_cb_) reload_cb_();
     } else if (chosen == &items[2]) {
-      if (navigate_cb_) (void)navigate_cb_(1);
+      if (navigate_cb_) (void)navigate_cb_(-1);
     } else if (chosen == &items[3]) {
-      zoom_by(1.0 / kZoomStep, viewport_w() / 2, viewport_h() / 2);
+      if (navigate_cb_) (void)navigate_cb_(1);
     } else if (chosen == &items[4]) {
-      zoom_by(kZoomStep, viewport_w() / 2, viewport_h() / 2);
+      zoom_by(1.0 / kZoomStep, viewport_w() / 2, viewport_h() / 2);
     } else if (chosen == &items[5]) {
-      reset_zoom();
+      zoom_by(kZoomStep, viewport_w() / 2, viewport_h() / 2);
     } else if (chosen == &items[6]) {
-      if (open_gimp_cb_) open_gimp_cb_();
+      reset_zoom();
     } else if (chosen == &items[7]) {
+      if (open_gimp_cb_) open_gimp_cb_();
+    } else if (chosen == &items[8]) {
       if (open_inkscape_cb_) open_inkscape_cb_();
     }
   }
@@ -454,6 +461,17 @@ class ImageView : public Fl_Widget {
     if ((Fl::event_state() & FL_CTRL) && key == 3) {  // Ctrl+C (ETX)
       if (copy_cb_) {
         copy_cb_();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool handle_reload_shortcut() {
+    const int key = Fl::event_key();
+    if (key == 'r' || key == 'R' || ((Fl::event_state() & FL_CTRL) && key == ('r' & 0x1f))) {
+      if (reload_cb_) {
+        reload_cb_();
       }
       return true;
     }
@@ -560,6 +578,7 @@ class ImageView : public Fl_Widget {
   bool pan_timer_active_ = false;
   std::function<bool(int)> navigate_cb_;
   std::function<void()> copy_cb_;
+  std::function<void()> reload_cb_;
   std::function<void()> open_gimp_cb_;
   std::function<void()> open_inkscape_cb_;
   bool gimp_available_ = false;
@@ -892,6 +911,19 @@ int main(int argc, char** argv) {
                    "Copy failed for %s (need wl-copy on Wayland or xclip on X11)\n",
                    current_meta.path.string().c_str());
     }
+  });
+  view.set_reload_callback([&]() {
+    LoadedImage refreshed;
+    std::string err;
+    if (!load_image_rgb(current_file.string().c_str(), refreshed, err)) {
+      std::fprintf(stderr, "Reload failed: %s (%s)\n", current_file.string().c_str(), err.c_str());
+      return;
+    }
+    current_meta = build_file_metadata(current_file);
+    current_meta.width = refreshed.w;
+    current_meta.height = refreshed.h;
+    status.copy_label(make_status_text(current_meta).c_str());
+    view.set_image(std::move(refreshed));
   });
   view.set_open_gimp_callback([&]() { (void)launch_app_if_available("gimp", current_meta.path); });
   view.set_open_inkscape_callback(
