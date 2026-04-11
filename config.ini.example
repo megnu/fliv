@@ -1,0 +1,9 @@
+[ui]
+# Use hex colors (#RRGGBB)
+frame_bg = #1e1e1e
+status_bg = #141414
+status_fg = #e6e6e6
+
+# Font name and size (optional, used by status bar and right-click menu)
+font = Noto Sans
+font_size = 13

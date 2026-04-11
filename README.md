@@ -19,6 +19,10 @@ make
 ```
 
 ```bash
+./fliv --config /path/to/config.ini /path/to/image.png
+```
+
+```bash
 ./fliv --list-formats
 ```
 
@@ -47,11 +51,27 @@ make
 - `c` or `Ctrl+C`: copy current image file to clipboard (`wl-copy` on Wayland, `xclip` on X11).
 - `g` or `Ctrl+G`: open current image in GIMP (if installed).
 - `i` or `Ctrl+I`: open current image in Inkscape (if installed).
+- `Esc`: quit.
 - Program can start with no input image; empty state shows an open hint and accepts open shortcut/menu.
 - Right-click menu: Copy, Reload, Previous/Next File, Zoom In/Out/Reset, Open Image, Open with GIMP, Open with Inkscape.
 - GIMP/Inkscape menu entries are disabled if the app is unavailable at startup.
 - Bottom status bar shows: filename, mime type, human-readable file size, and dimensions.
 - MIME type is detected from file content using `libmagic` (package: `file`).
+
+## Config file
+
+- Optional default path: `${XDG_CONFIG_HOME:-$HOME/.config}/fliv/config.ini`
+- Optional override path: `--config /path/to/config.ini`
+- Config file is not auto-created; create it manually if you want overrides.
+- Example config is shipped at `/usr/share/doc/fliv/config.ini.example`.
+
+Supported keys (`[ui]` section):
+
+- `frame_bg = #RRGGBB`
+- `status_bg = #RRGGBB`
+- `status_fg = #RRGGBB`
+- `font = <font name>` (applies to status bar and right-click menu)
+- `font_size = <6..96>` (applies to status bar and right-click menu)
 
 ## Format support
 

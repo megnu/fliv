@@ -12,16 +12,20 @@
 #include <magic.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <list>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -44,6 +48,16 @@ constexpr const char* kLoaderDirs[] = {
     "/usr/local/lib/imlib2/loaders",
     "/usr/local/lib64/imlib2/loaders",
 };
+
+constexpr unsigned char kDefaultFrameBgR = 30;
+constexpr unsigned char kDefaultFrameBgG = 30;
+constexpr unsigned char kDefaultFrameBgB = 30;
+constexpr unsigned char kDefaultStatusBgR = 20;
+constexpr unsigned char kDefaultStatusBgG = 20;
+constexpr unsigned char kDefaultStatusBgB = 20;
+constexpr unsigned char kDefaultStatusFgR = 230;
+constexpr unsigned char kDefaultStatusFgG = 230;
+constexpr unsigned char kDefaultStatusFgB = 230;
 
 struct LoadedImage {
   int w = 0;
@@ -92,6 +106,89 @@ struct FileMetadata {
   int width = 0;
   int height = 0;
 };
+
+struct UiConfig {
+  unsigned char frame_bg_r = kDefaultFrameBgR;
+  unsigned char frame_bg_g = kDefaultFrameBgG;
+  unsigned char frame_bg_b = kDefaultFrameBgB;
+  unsigned char status_bg_r = kDefaultStatusBgR;
+  unsigned char status_bg_g = kDefaultStatusBgG;
+  unsigned char status_bg_b = kDefaultStatusBgB;
+  unsigned char status_fg_r = kDefaultStatusFgR;
+  unsigned char status_fg_g = kDefaultStatusFgG;
+  unsigned char status_fg_b = kDefaultStatusFgB;
+  std::string font_name;
+  int font_size = 13;
+};
+
+struct CliOptions {
+  bool list_formats = false;
+  std::optional<std::filesystem::path> image_file;
+  std::optional<std::filesystem::path> config_file;
+};
+
+std::string trim(std::string s) {
+  size_t b = 0;
+  while (b < s.size() && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+  size_t e = s.size();
+  while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+  return s.substr(b, e - b);
+}
+
+bool parse_hex_color(std::string s, unsigned char& r, unsigned char& g, unsigned char& b) {
+  s = trim(std::move(s));
+  if (s.size() != 7 || s[0] != '#') return false;
+  auto hex = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+  };
+  int v[6];
+  for (int i = 0; i < 6; ++i) {
+    v[i] = hex(s[1 + i]);
+    if (v[i] < 0) return false;
+  }
+  r = static_cast<unsigned char>(v[0] * 16 + v[1]);
+  g = static_cast<unsigned char>(v[2] * 16 + v[3]);
+  b = static_cast<unsigned char>(v[4] * 16 + v[5]);
+  return true;
+}
+
+std::string to_lower_ascii(std::string s) {
+  for (char& c : s) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return s;
+}
+
+bool parse_int_in_range(const std::string& s, int min_v, int max_v, int& out_v) {
+  const std::string t = trim(s);
+  if (t.empty()) return false;
+  char* end = nullptr;
+  long v = std::strtol(t.c_str(), &end, 10);
+  if (!end || *end != '\0') return false;
+  if (v < min_v || v > max_v) return false;
+  out_v = static_cast<int>(v);
+  return true;
+}
+
+Fl_Font resolve_font_name(const std::string& name) {
+  const std::string want = to_lower_ascii(trim(name));
+  if (want.empty()) return FL_HELVETICA;
+  const Fl_Font n = Fl::set_fonts();
+  for (int f = 0; f < n; ++f) {
+    int attrs = 0;
+    const char* got = Fl::get_font_name(static_cast<Fl_Font>(f), &attrs);
+    (void)attrs;
+    if (!got) continue;
+    if (to_lower_ascii(got) == want) {
+      return static_cast<Fl_Font>(f);
+    }
+  }
+  Fl::set_font(FL_FREE_FONT, name.c_str());
+  return FL_FREE_FONT;
+}
 
 int normalize_frame_delay_ms(int delay_ms) {
   if (delay_ms <= 0) {
@@ -516,6 +613,11 @@ class ImageView : public Fl_Widget {
     gimp_available_ = gimp_available;
     inkscape_available_ = inkscape_available;
   }
+  void set_frame_background_color(Fl_Color c) { frame_bg_color_ = c; }
+  void set_menu_font(Fl_Font font, Fl_Fontsize size) {
+    menu_font_ = font;
+    menu_font_size_ = size;
+  }
 
   void set_image(LoadedImage image) {
     stop_animation();
@@ -655,7 +757,7 @@ class ImageView : public Fl_Widget {
   void draw() override {
     fl_push_clip(x(), y(), w(), h());
 
-    fl_color(fl_rgb_color(30, 30, 30));
+    fl_color(frame_bg_color_);
     fl_rectf(x(), y(), w(), h());
 
     if (!has_image_) {
@@ -886,6 +988,10 @@ class ImageView : public Fl_Widget {
     items[7] = {"Open Image... (o)", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
     items[8] = {"Open with GIMP (g)", 0, nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
     items[9] = {"Open with Inkscape (i)", 0, nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
+    for (int i = 0; i < 10; ++i) {
+      items[i].labelfont(menu_font_);
+      items[i].labelsize(menu_font_size_);
+    }
 
     Fl_Menu_Button popup_btn(Fl::event_x(), Fl::event_y(), 0, 0);
     popup_btn.type(Fl_Menu_Button::POPUP3);
@@ -1101,6 +1207,9 @@ class ImageView : public Fl_Widget {
   std::function<void()> open_inkscape_cb_;
   bool gimp_available_ = false;
   bool inkscape_available_ = false;
+  Fl_Color frame_bg_color_ = fl_rgb_color(kDefaultFrameBgR, kDefaultFrameBgG, kDefaultFrameBgB);
+  Fl_Font menu_font_ = FL_HELVETICA;
+  Fl_Fontsize menu_font_size_ = FL_NORMAL_SIZE;
 };
 
 class AppWindow : public Fl_Double_Window {
@@ -1190,8 +1299,106 @@ void print_formats() {
 }
 
 void print_usage(const char* argv0) {
-  std::fprintf(stderr, "Usage: %s [image-file]\n", argv0);
+  std::fprintf(stderr, "Usage: %s [--config <path>] [image-file]\n", argv0);
   std::fprintf(stderr, "       %s --list-formats\n", argv0);
+}
+
+std::filesystem::path default_config_path() {
+  if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && xdg[0]) {
+    return std::filesystem::path(xdg) / "fliv" / "config.ini";
+  }
+  if (const char* home = std::getenv("HOME"); home && home[0]) {
+    return std::filesystem::path(home) / ".config" / "fliv" / "config.ini";
+  }
+  return std::filesystem::path("config.ini");
+}
+
+bool parse_cli(int argc, char** argv, CliOptions& out, std::string& err_out) {
+  out = {};
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--list-formats") {
+      out.list_formats = true;
+      continue;
+    }
+    if (arg == "--config") {
+      if (i + 1 >= argc) {
+        err_out = "--config requires a path";
+        return false;
+      }
+      out.config_file = std::filesystem::path(argv[++i]);
+      continue;
+    }
+    if (!arg.empty() && arg[0] == '-') {
+      err_out = "unknown option: " + arg;
+      return false;
+    }
+    if (out.image_file.has_value()) {
+      err_out = "only one image file argument is supported";
+      return false;
+    }
+    out.image_file = std::filesystem::path(arg);
+  }
+  if (out.list_formats && out.image_file.has_value()) {
+    err_out = "--list-formats cannot be combined with image file argument";
+    return false;
+  }
+  return true;
+}
+
+bool load_ui_config_file(const std::filesystem::path& path, UiConfig& cfg, std::string& err_out) {
+  std::ifstream in(path);
+  if (!in) {
+    err_out = "cannot open config file";
+    return false;
+  }
+
+  bool in_ui = false;
+  std::string line;
+  int lineno = 0;
+  while (std::getline(in, line)) {
+    ++lineno;
+    std::string s = trim(line);
+    if (s.empty() || s[0] == '#' || s[0] == ';') continue;
+    if (s.front() == '[' && s.back() == ']') {
+      std::string section = trim(s.substr(1, s.size() - 2));
+      in_ui = (section == "ui");
+      continue;
+    }
+    if (!in_ui) continue;
+
+    const size_t eq = s.find('=');
+    if (eq == std::string::npos) continue;
+    std::string key = trim(s.substr(0, eq));
+    std::string val = trim(s.substr(eq + 1));
+    if (!val.empty() && ((val.front() == '"' && val.back() == '"') ||
+                         (val.front() == '\'' && val.back() == '\''))) {
+      val = val.substr(1, val.size() - 2);
+    }
+
+    unsigned char r = 0, g = 0, b = 0;
+    if (key == "frame_bg") {
+      if (parse_hex_color(val, r, g, b)) {
+        cfg.frame_bg_r = r; cfg.frame_bg_g = g; cfg.frame_bg_b = b;
+      }
+    } else if (key == "status_bg") {
+      if (parse_hex_color(val, r, g, b)) {
+        cfg.status_bg_r = r; cfg.status_bg_g = g; cfg.status_bg_b = b;
+      }
+    } else if (key == "status_fg") {
+      if (parse_hex_color(val, r, g, b)) {
+        cfg.status_fg_r = r; cfg.status_fg_g = g; cfg.status_fg_b = b;
+      }
+    } else if (key == "font") {
+      cfg.font_name = val;
+    } else if (key == "font_size") {
+      int sz = 0;
+      if (parse_int_in_range(val, 6, 96, sz)) {
+        cfg.font_size = sz;
+      }
+    }
+  }
+  return true;
 }
 
 std::string make_title(const std::filesystem::path& file) {
@@ -1351,20 +1558,37 @@ bool pick_image_file(std::filesystem::path& out_file, const std::filesystem::pat
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc == 2 && std::string(argv[1]) == "--list-formats") {
-    print_formats();
-    return 0;
-  }
-  if (argc > 2) {
+  CliOptions cli;
+  std::string cli_err;
+  if (!parse_cli(argc, argv, cli, cli_err)) {
+    std::fprintf(stderr, "%s\n", cli_err.c_str());
     print_usage(argv[0]);
     return 1;
   }
 
-  constexpr unsigned char kBgR = 30;
-  constexpr unsigned char kBgG = 30;
-  constexpr unsigned char kBgB = 30;
+  if (cli.list_formats) {
+    print_formats();
+    return 0;
+  }
 
   namespace fs = std::filesystem;
+  UiConfig ui_cfg;
+  std::string cfg_err;
+  const fs::path cfg_path = cli.config_file.has_value()
+      ? fs::absolute(*cli.config_file).lexically_normal()
+      : default_config_path();
+  if (fs::exists(cfg_path)) {
+    if (!load_ui_config_file(cfg_path, ui_cfg, cfg_err)) {
+      std::fprintf(stderr, "Config load failed: %s (%s)\n", cfg_path.string().c_str(), cfg_err.c_str());
+      if (cli.config_file.has_value()) {
+        return 1;
+      }
+    }
+  } else if (cli.config_file.has_value()) {
+    std::fprintf(stderr, "Config file not found: %s\n", cfg_path.string().c_str());
+    return 1;
+  }
+
   fs::path current_file;
   fs::path current_dir = fs::current_path();
   FileMetadata current_meta;
@@ -1373,8 +1597,8 @@ int main(int argc, char** argv) {
 
   DecodedImage decoded;
   bool have_initial_image = false;
-  if (argc >= 2) {
-    current_file = fs::absolute(fs::path(argv[1])).lexically_normal();
+  if (cli.image_file.has_value()) {
+    current_file = fs::absolute(*cli.image_file).lexically_normal();
     current_dir = current_file.parent_path();
     std::string load_err;
     if (!load_image_decoded(current_file.string().c_str(), decoded, load_err)) {
@@ -1409,17 +1633,26 @@ int main(int argc, char** argv) {
   const std::string title = have_initial_image ? make_title(current_file) : "fliv";
   AppWindow win(win_w, win_h, title.c_str());
   win.begin();
-  win.color(fl_rgb_color(kBgR, kBgG, kBgB));
+  const Fl_Color frame_bg = fl_rgb_color(ui_cfg.frame_bg_r, ui_cfg.frame_bg_g, ui_cfg.frame_bg_b);
+  const Fl_Color status_bg = fl_rgb_color(ui_cfg.status_bg_r, ui_cfg.status_bg_g, ui_cfg.status_bg_b);
+  const Fl_Color status_fg = fl_rgb_color(ui_cfg.status_fg_r, ui_cfg.status_fg_g, ui_cfg.status_fg_b);
+  win.color(frame_bg);
   ImageView view(0, 0, win_w, std::max(1, win_h - kStatusBarH), LoadedImage{});
+  view.set_frame_background_color(frame_bg);
   Fl_Box status(0, std::max(0, win_h - kStatusBarH), win_w, kStatusBarH);
   win.set_layout_widgets(&view, &status);
   status.box(FL_FLAT_BOX);
-  status.color(fl_rgb_color(20, 20, 20));
-  status.labelcolor(fl_rgb_color(230, 230, 230));
-  status.labelfont(FL_HELVETICA);
-  status.labelsize(13);
+  status.color(status_bg);
+  status.labelcolor(status_fg);
+  Fl_Font status_font = FL_HELVETICA;
+  if (!ui_cfg.font_name.empty()) {
+    status_font = resolve_font_name(ui_cfg.font_name);
+  }
+  status.labelfont(status_font);
+  status.labelsize(ui_cfg.font_size);
   status.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
   status.copy_label(make_status_text(current_meta).c_str());
+  view.set_menu_font(status_font, static_cast<Fl_Fontsize>(ui_cfg.font_size));
   win.resizable(&view);
   view.set_external_app_availability(command_exists("gimp"), command_exists("inkscape"));
 
