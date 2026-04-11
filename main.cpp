@@ -713,6 +713,9 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_KEYDOWN:
       case FL_SHORTCUT:
+        if (handle_context_menu_shortcut()) {
+          return 1;
+        }
         if (handle_escape_shortcut()) {
           return 1;
         }
@@ -1055,13 +1058,13 @@ class ImageView : public Fl_Widget {
     items[0] = {"Copy", 'c', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[1] = {"Reload", 'r', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
     items[2] = {"Previous File", 'p', nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[3] = {"Next File", 'n', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[4] = {"Zoom In", '+', nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[5] = {"Zoom Out", '-', nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[6] = {"Zoom Reset", '0', nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[7] = {"Fit to Window", 'f', nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[8] = {"Toggle Fullscreen", FL_F + 11, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[9] = {"Open Image...", 'o', nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[3] = {"Next File", 'n', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[4] = {"Open File...", 'o', nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[5] = {"Zoom In", '+', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[6] = {"Zoom Out", '-', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[7] = {"Zoom Reset", '0', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[8] = {"Fit to Window", 'f', nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[9] = {"Toggle Fullscreen", FL_F + 11, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
     items[10] = {"Open with GIMP", 'g', nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
     items[11] = {"Open with Inkscape", 'i', nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
     for (int i = 0; i < 12; ++i) {
@@ -1084,22 +1087,32 @@ class ImageView : public Fl_Widget {
     } else if (chosen == &items[3]) {
       if (navigate_cb_) (void)navigate_cb_(1);
     } else if (chosen == &items[4]) {
-      zoom_by(kZoomStep, viewport_w() / 2, viewport_h() / 2);
-    } else if (chosen == &items[5]) {
-      zoom_by(1.0 / kZoomStep, viewport_w() / 2, viewport_h() / 2);
-    } else if (chosen == &items[6]) {
-      reset_zoom();
-    } else if (chosen == &items[7]) {
-      fit_to_window();
-    } else if (chosen == &items[8]) {
-      if (toggle_fullscreen_cb_) toggle_fullscreen_cb_();
-    } else if (chosen == &items[9]) {
       if (open_file_cb_) open_file_cb_();
+    } else if (chosen == &items[5]) {
+      zoom_by(kZoomStep, viewport_w() / 2, viewport_h() / 2);
+    } else if (chosen == &items[6]) {
+      zoom_by(1.0 / kZoomStep, viewport_w() / 2, viewport_h() / 2);
+    } else if (chosen == &items[7]) {
+      reset_zoom();
+    } else if (chosen == &items[8]) {
+      fit_to_window();
+    } else if (chosen == &items[9]) {
+      if (toggle_fullscreen_cb_) toggle_fullscreen_cb_();
     } else if (chosen == &items[10]) {
       if (open_gimp_cb_) open_gimp_cb_();
     } else if (chosen == &items[11]) {
       if (open_inkscape_cb_) open_inkscape_cb_();
     }
+  }
+
+  bool handle_context_menu_shortcut() {
+    const int key = Fl::event_key();
+    const bool shift = (Fl::event_state() & FL_SHIFT) != 0;
+    if (key == FL_Menu || (shift && key == (FL_F + 10))) {
+      show_context_menu();
+      return true;
+    }
+    return false;
   }
 
   bool handle_zoom_shortcuts() {
