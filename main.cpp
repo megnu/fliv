@@ -956,21 +956,76 @@ class ImageView : public Fl_Widget {
       scaled_view_.resize(need);
     }
 
-    // Nearest-neighbor sampling for zoom/pan. Cost scales with viewport size, not zoomed image size.
-    for (int y = 0; y < out_h; ++y) {
-      const int vy = vis_y0 + y;
-      int sy = static_cast<int>(std::floor((vy - img_y_) / scale));
-      sy = std::clamp(sy, 0, src_h_ - 1);
-      for (int x = 0; x < out_w; ++x) {
-        const int vx = vis_x0 + x;
-        int sx = static_cast<int>(std::floor((vx - img_x_) / scale));
-        sx = std::clamp(sx, 0, src_w_ - 1);
+    if (scale >= 1.0) {
+      // Nearest-neighbor for native/zoom-in inspection clarity.
+      for (int y = 0; y < out_h; ++y) {
+        const int vy = vis_y0 + y;
+        int sy = static_cast<int>(std::floor((vy - img_y_) / scale));
+        sy = std::clamp(sy, 0, src_h_ - 1);
+        for (int x = 0; x < out_w; ++x) {
+          const int vx = vis_x0 + x;
+          int sx = static_cast<int>(std::floor((vx - img_x_) / scale));
+          sx = std::clamp(sx, 0, src_w_ - 1);
 
-        const size_t si = (static_cast<size_t>(sy) * static_cast<size_t>(src_w_) + static_cast<size_t>(sx)) * 3u;
-        const size_t di = (static_cast<size_t>(y) * static_cast<size_t>(out_w) + static_cast<size_t>(x)) * 3u;
-        scaled_view_[di + 0] = src_pixels_[si + 0];
-        scaled_view_[di + 1] = src_pixels_[si + 1];
-        scaled_view_[di + 2] = src_pixels_[si + 2];
+          const size_t si =
+              (static_cast<size_t>(sy) * static_cast<size_t>(src_w_) + static_cast<size_t>(sx)) * 3u;
+          const size_t di =
+              (static_cast<size_t>(y) * static_cast<size_t>(out_w) + static_cast<size_t>(x)) * 3u;
+          scaled_view_[di + 0] = src_pixels_[si + 0];
+          scaled_view_[di + 1] = src_pixels_[si + 1];
+          scaled_view_[di + 2] = src_pixels_[si + 2];
+        }
+      }
+    } else {
+      // Bilinear for zoom-out quality.
+      for (int y = 0; y < out_h; ++y) {
+        const int vy = vis_y0 + y;
+        const double src_y = (static_cast<double>(vy - img_y_) + 0.5) / scale - 0.5;
+        int y0 = static_cast<int>(std::floor(src_y));
+        int y1 = y0 + 1;
+        double wy = src_y - static_cast<double>(y0);
+        if (y0 < 0) {
+          y0 = y1 = 0;
+          wy = 0.0;
+        } else if (y1 >= src_h_) {
+          y1 = y0 = src_h_ - 1;
+          wy = 0.0;
+        }
+
+        for (int x = 0; x < out_w; ++x) {
+          const int vx = vis_x0 + x;
+          const double src_x = (static_cast<double>(vx - img_x_) + 0.5) / scale - 0.5;
+          int x0 = static_cast<int>(std::floor(src_x));
+          int x1 = x0 + 1;
+          double wx = src_x - static_cast<double>(x0);
+          if (x0 < 0) {
+            x0 = x1 = 0;
+            wx = 0.0;
+          } else if (x1 >= src_w_) {
+            x1 = x0 = src_w_ - 1;
+            wx = 0.0;
+          }
+
+          const size_t p00 = (static_cast<size_t>(y0) * static_cast<size_t>(src_w_) + static_cast<size_t>(x0)) * 3u;
+          const size_t p10 = (static_cast<size_t>(y0) * static_cast<size_t>(src_w_) + static_cast<size_t>(x1)) * 3u;
+          const size_t p01 = (static_cast<size_t>(y1) * static_cast<size_t>(src_w_) + static_cast<size_t>(x0)) * 3u;
+          const size_t p11 = (static_cast<size_t>(y1) * static_cast<size_t>(src_w_) + static_cast<size_t>(x1)) * 3u;
+          const size_t di =
+              (static_cast<size_t>(y) * static_cast<size_t>(out_w) + static_cast<size_t>(x)) * 3u;
+
+          const double w00 = (1.0 - wx) * (1.0 - wy);
+          const double w10 = wx * (1.0 - wy);
+          const double w01 = (1.0 - wx) * wy;
+          const double w11 = wx * wy;
+
+          for (int c = 0; c < 3; ++c) {
+            const double v =
+                src_pixels_[p00 + c] * w00 + src_pixels_[p10 + c] * w10 +
+                src_pixels_[p01 + c] * w01 + src_pixels_[p11 + c] * w11;
+            scaled_view_[di + static_cast<size_t>(c)] =
+                static_cast<unsigned char>(std::clamp(static_cast<int>(std::lround(v)), 0, 255));
+          }
+        }
       }
     }
 
