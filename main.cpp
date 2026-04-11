@@ -876,16 +876,16 @@ class ImageView : public Fl_Widget {
     const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
     const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
     Fl_Menu_Item items[11] = {};
-    items[0] = {"Copy", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[1] = {"Reload", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[2] = {"Previous File", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[3] = {"Next File", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[4] = {"Zoom In", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[5] = {"Zoom Out", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
-    items[6] = {"Zoom Reset", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[7] = {"Open Image...", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
-    items[8] = {"Open with GIMP", 0, nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
-    items[9] = {"Open with Inkscape", 0, nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
+    items[0] = {"Copy (c)", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[1] = {"Reload (r)", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[2] = {"Previous File (←)", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[3] = {"Next File (→)", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[4] = {"Zoom In (+)", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[5] = {"Zoom Out (-)", 0, nullptr, nullptr, image_flags, 0, 0, 0, 0};
+    items[6] = {"Zoom Reset (0)", 0, nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[7] = {"Open Image... (o)", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[8] = {"Open with GIMP (g)", 0, nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
+    items[9] = {"Open with Inkscape (i)", 0, nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
 
     Fl_Menu_Button popup_btn(Fl::event_x(), Fl::event_y(), 0, 0);
     popup_btn.type(Fl_Menu_Button::POPUP3);
