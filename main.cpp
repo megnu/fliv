@@ -634,7 +634,7 @@ class ImageView : public Fl_Widget {
     image_ = std::move(image);
     has_image_ = (image_.w > 0 && image_.h > 0 && !image_.rgb.empty());
     sync_image_pointers();
-    fit_to_window();
+    fit_to_window_no_upscale();
     redraw();
   }
 
@@ -646,7 +646,7 @@ class ImageView : public Fl_Widget {
     image_ = std::move(first_frame);
     has_image_ = (image_.w > 0 && image_.h > 0 && !image_.rgb.empty());
     sync_image_pointers();
-    fit_to_window();
+    fit_to_window_no_upscale();
     if (has_animation_) {
       anim_engine_ = std::make_unique<AnimationEngine>(animation_);
       anim_engine_->prime_prefetch_next();
@@ -908,11 +908,18 @@ class ImageView : public Fl_Widget {
   int viewport_w() const { return std::max(1, w() - 2 * kPadding); }
   int viewport_h() const { return std::max(1, h() - 2 * kPadding); }
 
-  double fit_scale() const {
+  double fit_scale_no_upscale() const {
     if (!has_image_) return 1.0;
     const double sx = static_cast<double>(viewport_w()) / static_cast<double>(src_w_);
     const double sy = static_cast<double>(viewport_h()) / static_cast<double>(src_h_);
     return std::min(1.0, std::min(sx, sy));
+  }
+
+  double fit_scale_full() const {
+    if (!has_image_) return 1.0;
+    const double sx = static_cast<double>(viewport_w()) / static_cast<double>(src_w_);
+    const double sy = static_cast<double>(viewport_h()) / static_cast<double>(src_h_);
+    return std::min(sx, sy);
   }
 
   double current_scale() const { return std::clamp(zoom_, kZoomMin, kZoomMax); }
@@ -1264,7 +1271,15 @@ class ImageView : public Fl_Widget {
   }
 
   void fit_to_window() {
-    zoom_ = fit_scale();
+    zoom_ = fit_scale_full();
+    img_x_ = 0;
+    img_y_ = 0;
+    clamp_offsets();
+    redraw();
+  }
+
+  void fit_to_window_no_upscale() {
+    zoom_ = fit_scale_no_upscale();
     img_x_ = 0;
     img_y_ = 0;
     clamp_offsets();
