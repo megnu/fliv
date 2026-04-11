@@ -2,6 +2,7 @@
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Widget.H>
 #include <FL/Fl_Box.H>
+#include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
 #include <FL/Fl_RGB_Image.H>
 
@@ -112,6 +113,10 @@ class ImageView : public Fl_Widget {
   void set_copy_callback(std::function<void()> cb) { copy_cb_ = std::move(cb); }
   void set_open_gimp_callback(std::function<void()> cb) { open_gimp_cb_ = std::move(cb); }
   void set_open_inkscape_callback(std::function<void()> cb) { open_inkscape_cb_ = std::move(cb); }
+  void set_external_app_availability(bool gimp_available, bool inkscape_available) {
+    gimp_available_ = gimp_available;
+    inkscape_available_ = inkscape_available;
+  }
 
   void set_image(LoadedImage image) {
     image_ = std::move(image);
@@ -128,6 +133,10 @@ class ImageView : public Fl_Widget {
         return 1;
       case FL_PUSH:
         take_focus();
+        if (Fl::event_button() == FL_RIGHT_MOUSE) {
+          show_context_menu(Fl::event_x_root(), Fl::event_y_root());
+          return 1;
+        }
         if (Fl::event_button() == FL_LEFT_MOUSE) {
           dragging_ = true;
           drag_last_x_ = Fl::event_x();
@@ -367,6 +376,41 @@ class ImageView : public Fl_Widget {
     fl_draw_image(scaled_view_.data(), viewport_x() + vis_x0, viewport_y() + vis_y0, out_w, out_h, 3);
   }
 
+  void show_context_menu(int screen_x, int screen_y) {
+    const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
+    const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
+    Fl_Menu_Item items[9] = {};
+    items[0] = {"Copy", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[1] = {"Previous File", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[2] = {"Next File", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[3] = {"Zoom Out", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[4] = {"Zoom In", 0, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[5] = {"Zoom Reset", 0, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[6] = {"Open with GIMP", 0, nullptr, nullptr, gimp_flags, 0, 0, 0, 0};
+    items[7] = {"Open with Inkscape", 0, nullptr, nullptr, inkscape_flags, 0, 0, 0, 0};
+
+    const Fl_Menu_Item* chosen = items->popup(screen_x, screen_y);
+    if (!chosen) return;
+
+    if (chosen == &items[0]) {
+      if (copy_cb_) copy_cb_();
+    } else if (chosen == &items[1]) {
+      if (navigate_cb_) (void)navigate_cb_(-1);
+    } else if (chosen == &items[2]) {
+      if (navigate_cb_) (void)navigate_cb_(1);
+    } else if (chosen == &items[3]) {
+      zoom_by(1.0 / kZoomStep, viewport_w() / 2, viewport_h() / 2);
+    } else if (chosen == &items[4]) {
+      zoom_by(kZoomStep, viewport_w() / 2, viewport_h() / 2);
+    } else if (chosen == &items[5]) {
+      reset_zoom();
+    } else if (chosen == &items[6]) {
+      if (open_gimp_cb_) open_gimp_cb_();
+    } else if (chosen == &items[7]) {
+      if (open_inkscape_cb_) open_inkscape_cb_();
+    }
+  }
+
   bool handle_zoom_shortcuts() {
     if (!(Fl::event_state() & FL_CTRL)) {
       return false;
@@ -518,6 +562,8 @@ class ImageView : public Fl_Widget {
   std::function<void()> copy_cb_;
   std::function<void()> open_gimp_cb_;
   std::function<void()> open_inkscape_cb_;
+  bool gimp_available_ = false;
+  bool inkscape_available_ = false;
 };
 
 class AppWindow : public Fl_Double_Window {
@@ -812,6 +858,7 @@ int main(int argc, char** argv) {
   status.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
   status.copy_label(make_status_text(current_meta).c_str());
   win.resizable(&view);
+  view.set_external_app_availability(command_exists("gimp"), command_exists("inkscape"));
 
   view.set_navigate_callback([&](int dir) -> bool {
     if (dir_files.empty()) {
