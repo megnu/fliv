@@ -122,6 +122,7 @@ struct UiConfig {
 };
 
 struct CliOptions {
+  bool help = false;
   bool list_formats = false;
   std::optional<std::filesystem::path> image_file;
   std::optional<std::filesystem::path> config_file;
@@ -1432,8 +1433,14 @@ void print_formats() {
 }
 
 void print_usage(const char* argv0) {
-  std::fprintf(stderr, "Usage: %s [--config <path>] [image-file]\n", argv0);
-  std::fprintf(stderr, "       %s --list-formats\n", argv0);
+  std::fprintf(stdout, "Usage:\n");
+  std::fprintf(stdout, "  %s [--config <path>] [image-file]\n", argv0);
+  std::fprintf(stdout, "  %s --list-formats\n", argv0);
+  std::fprintf(stdout, "  %s --help\n", argv0);
+  std::fprintf(stdout, "\nOptions:\n");
+  std::fprintf(stdout, "  --config <path>   Load UI config file from path\n");
+  std::fprintf(stdout, "  --list-formats    List imlib2 loaders and exit\n");
+  std::fprintf(stdout, "  -h, --help        Show this help and exit\n");
 }
 
 std::filesystem::path default_config_path() {
@@ -1450,6 +1457,10 @@ bool parse_cli(int argc, char** argv, CliOptions& out, std::string& err_out) {
   out = {};
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
+    if (arg == "--help" || arg == "-h") {
+      out.help = true;
+      continue;
+    }
     if (arg == "--list-formats") {
       out.list_formats = true;
       continue;
@@ -1697,6 +1708,11 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "%s\n", cli_err.c_str());
     print_usage(argv[0]);
     return 1;
+  }
+
+  if (cli.help) {
+    print_usage(argv[0]);
+    return 0;
   }
 
   if (cli.list_formats) {

@@ -7,6 +7,13 @@ url="https://github.com/blacklung/fliv"
 license=('GPL-2.0-or-later')
 depends=('fltk' 'imlib2' 'file')
 optdepends=(
+    'libheif: HEIF/AVIF loader support'
+    'libid3tag: ID3 loader support'
+    'libjxl: JPEG XL (JXL) loader support'
+    'librsvg: SVG loader support'
+    'libspectre: PostScript (PS) loader support'
+    'libwebp: WEBP loader support'
+    'openjpeg2: JPEG 2000 (J2K) loader support'
     'wl-clipboard: copy image to clipboard on Wayland (wl-copy)'
     'xclip: copy image to clipboard on X11'
     'gimp: open current image with g/Ctrl+G'
