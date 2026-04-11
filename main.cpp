@@ -32,7 +32,7 @@
 
 namespace {
 
-constexpr int kPadding = 16;
+constexpr int kPadding = 0;
 constexpr int kMinWindowW = 240;
 constexpr int kMinWindowH = 180;
 constexpr int kStatusBarH = 24;
@@ -789,11 +789,8 @@ class ImageView : public Fl_Widget {
     const int draw_w = scaled_w();
     const int draw_h = scaled_h();
     clamp_offsets();
-
-    const int draw_x = viewport_x() + img_x_;
-    const int draw_y = viewport_y() + img_y_;
-    fl_color(fl_rgb_color(12, 12, 12));
-    fl_rectf(draw_x - 1, draw_y - 1, draw_w + 2, draw_h + 2);
+    (void)draw_w;
+    (void)draw_h;
 
     draw_visible_region();
 
