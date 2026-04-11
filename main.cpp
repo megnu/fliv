@@ -3,6 +3,7 @@
 #include <FL/Fl_Widget.H>
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Menu_Item.H>
+#include <FL/Fl_Menu_Button.H>
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/fl_draw.H>
 #include <FL/Fl_RGB_Image.H>
@@ -570,7 +571,7 @@ class ImageView : public Fl_Widget {
       case FL_PUSH:
         take_focus();
         if (Fl::event_button() == FL_RIGHT_MOUSE) {
-          show_context_menu(Fl::event_x_root(), Fl::event_y_root());
+          show_context_menu();
           return 1;
         }
         if (Fl::event_button() == FL_LEFT_MOUSE) {
@@ -870,7 +871,7 @@ class ImageView : public Fl_Widget {
     fl_draw_image(scaled_view_.data(), viewport_x() + vis_x0, viewport_y() + vis_y0, out_w, out_h, 3);
   }
 
-  void show_context_menu(int screen_x, int screen_y) {
+  void show_context_menu() {
     const int image_flags = has_image_ ? 0 : FL_MENU_INACTIVE;
     const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
     const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
@@ -886,7 +887,10 @@ class ImageView : public Fl_Widget {
     items[8] = {"Open with GIMP", 0, nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
     items[9] = {"Open with Inkscape", 0, nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
 
-    const Fl_Menu_Item* chosen = items->popup(screen_x, screen_y);
+    Fl_Menu_Button popup_btn(Fl::event_x(), Fl::event_y(), 0, 0);
+    popup_btn.type(Fl_Menu_Button::POPUP3);
+    popup_btn.menu(items);
+    const Fl_Menu_Item* chosen = popup_btn.popup();
     if (!chosen) return;
 
     if (chosen == &items[0]) {

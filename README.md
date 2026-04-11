@@ -55,7 +55,7 @@ make
 
 ## Format support
 
-The current runtime loader directory is `/usr/lib/imlib2/loaders`.
+The runtime loader directory is auto-detected from standard imlib2 loader paths.
 
 `./fliv --list-formats` reports these image formats:
 
