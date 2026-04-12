@@ -1732,8 +1732,7 @@ bool launch_app_if_available(const char* app, const std::filesystem::path& file)
   const std::string cmd =
       std::string(app) + " " + shell_quote(file.string()) + " >/dev/null 2>&1 &";
   const int rc = std::system(cmd.c_str());
-  (void)rc;
-  return true;
+  return rc == 0;
 }
 
 std::string human_size(uintmax_t bytes) {
