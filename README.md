@@ -1,5 +1,5 @@
 # fliv
-![fliv icon](icon-fliv.png)
+![fliv icon](fliv.png)
 
 A simple FLTK 1.4 + imlib2 image viewer with an OpenGL image canvas.
 

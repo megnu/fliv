@@ -20,7 +20,7 @@ optdepends=(
     'inkscape: open current image with i/Ctrl+I'
 )
 makedepends=('gcc')
-source=("VERSION" "main.cpp" "Makefile" "fliv.desktop" "fliv-icon.png" "config.ini.example")
+source=("VERSION" "main.cpp" "Makefile" "fliv.desktop" "fliv.png" "config.ini.example")
 md5sums=('30a04cf33ee91a3ecf4b75c71268f316'
          'ec2d37c425da947c50b06edd4349ff89'
          '7a4fb32c6e28e87efc384a7a7451d8f2'
@@ -34,7 +34,7 @@ build() {
 
 package() {
     install -Dm755 fliv "$pkgdir/usr/bin/fliv"
-    install -Dm644 fliv-icon.png "$pkgdir/usr/share/pixmaps/fliv.png"
+    install -Dm644 fliv.png "$pkgdir/usr/share/pixmaps/fliv.png"
     install -Dm644 fliv.desktop "$pkgdir/usr/share/applications/fliv.desktop"
     install -Dm644 config.ini.example "$pkgdir/usr/share/doc/fliv/config.ini.example"
 }
