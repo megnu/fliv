@@ -3,6 +3,8 @@
 
 A simple FLTK 1.4 + imlib2 image viewer.
 
+https://github.com/user-attachments/assets/548e3667-b4ea-41b6-8d0a-dd7326619969
+
 ## Requirements
 
 Build requirements:
