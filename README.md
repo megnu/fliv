@@ -3,6 +3,8 @@
 
 A simple FLTK 1.4 + imlib2 image viewer with an OpenGL image canvas.
 
+SPDX-License-Identifier: GPL-2.0-or-later
+
 https://github.com/user-attachments/assets/548e3667-b4ea-41b6-8d0a-dd7326619969
 
 ## Requirements
