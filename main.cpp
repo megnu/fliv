@@ -1,12 +1,12 @@
 #include <FL/Fl.H>
 #include <FL/Fl_Double_Window.H>
-#include <FL/Fl_Widget.H>
+#include <FL/Fl_Gl_Window.H>
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Menu_Item.H>
 #include <FL/Fl_Menu_Button.H>
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/fl_draw.H>
-#include <FL/Fl_RGB_Image.H>
+#include <FL/gl.h>
 
 #include <Imlib2.h>
 #include <magic.h>
@@ -609,10 +609,11 @@ bool load_image_decoded(const char* path, DecodedImage& out, std::string& err_ou
   return true;
 }
 
-class ImageView : public Fl_Widget {
+class ImageView : public Fl_Gl_Window {
  public:
   ImageView(int X, int Y, int W, int H, LoadedImage image = {})
-      : Fl_Widget(X, Y, W, H) {
+      : Fl_Gl_Window(X, Y, W, H) {
+    mode(FL_RGB | FL_DOUBLE);
     set_image(std::move(image));
   }
 
@@ -669,6 +670,7 @@ class ImageView : public Fl_Widget {
   void clear_image() {
     stop_animation();
     anim_engine_.reset();
+    release_texture();
     image_ = {};
     animation_ = {};
     has_animation_ = false;
@@ -792,41 +794,53 @@ class ImageView : public Fl_Widget {
       default:
         break;
     }
-    return Fl_Widget::handle(event);
+    return Fl_Gl_Window::handle(event);
   }
 
   void draw() override {
-    fl_push_clip(x(), y(), w(), h());
+    if (!valid()) {
+      glViewport(0, 0, pixel_w(), pixel_h());
+      glMatrixMode(GL_PROJECTION);
+      glLoadIdentity();
+      glOrtho(0.0, static_cast<double>(w()), static_cast<double>(h()), 0.0, -1.0, 1.0);
+      glMatrixMode(GL_MODELVIEW);
+      glLoadIdentity();
+      glDisable(GL_DEPTH_TEST);
+      glDisable(GL_BLEND);
+      glDisable(GL_CULL_FACE);
+    } else {
+      glViewport(0, 0, pixel_w(), pixel_h());
+    }
 
-    fl_color(frame_bg_color_);
-    fl_rectf(x(), y(), w(), h());
+    unsigned char bg_r = 0, bg_g = 0, bg_b = 0;
+    Fl::get_color(frame_bg_color_, bg_r, bg_g, bg_b);
+    glClearColor(static_cast<float>(bg_r) / 255.0f,
+                 static_cast<float>(bg_g) / 255.0f,
+                 static_cast<float>(bg_b) / 255.0f,
+                 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
 
     if (!has_image_) {
       const char* hint = "Press O / Ctrl+O or right-click -> Open Image...";
+      draw_begin();
       fl_color(fl_rgb_color(220, 220, 220));
       fl_font(FL_HELVETICA, 16);
       int tw = 0, th = 0;
       fl_measure(hint, tw, th, 0);
-      fl_draw(hint, x() + (w() - tw) / 2, y() + (h() + th) / 2);
-      fl_pop_clip();
+      fl_draw(hint, (w() - tw) / 2, (h() + th) / 2);
+      draw_end();
       return;
     }
 
-    const int draw_w = scaled_w();
-    const int draw_h = scaled_h();
     clamp_offsets();
-    (void)draw_w;
-    (void)draw_h;
-
-    draw_visible_region();
-
-    fl_pop_clip();
+    draw_visible_region_gl();
   }
 
   ~ImageView() override {
     stop_animation();
     stop_pan_timer();
     stop_zoom_timer();
+    release_texture();
   }
 
  private:
@@ -1039,7 +1053,39 @@ class ImageView : public Fl_Widget {
     }
   }
 
-  void draw_visible_region() {
+  void update_texture_if_needed() {
+    if (!has_image_ || src_w_ <= 0 || src_h_ <= 0 || !src_pixels_) return;
+    if (tex_ == 0) {
+      glGenTextures(1, &tex_);
+      tex_dirty_ = true;
+    }
+    glBindTexture(GL_TEXTURE_2D, tex_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (tex_dirty_) {
+      glTexImage2D(GL_TEXTURE_2D,
+                   0,
+                   GL_RGB,
+                   src_w_,
+                   src_h_,
+                   0,
+                   GL_RGB,
+                   GL_UNSIGNED_BYTE,
+                   src_pixels_);
+      tex_dirty_ = false;
+    }
+  }
+
+  void release_texture() {
+    if (tex_ == 0) return;
+    if (shown()) {
+      make_current();
+      glDeleteTextures(1, &tex_);
+    }
+    tex_ = 0;
+    tex_dirty_ = true;
+  }
+
+  void draw_visible_region_gl() {
     if (!has_image_) return;
     const int vw = viewport_w();
     const int vh = viewport_h();
@@ -1055,87 +1101,31 @@ class ImageView : public Fl_Widget {
       return;
     }
 
-    const int out_w = vis_x1 - vis_x0;
-    const int out_h = vis_y1 - vis_y0;
-    const size_t need = static_cast<size_t>(out_w) * static_cast<size_t>(out_h) * 3u;
-    if (scaled_view_.size() != need) {
-      scaled_view_.resize(need);
-    }
+    update_texture_if_needed();
+    if (tex_ == 0) return;
 
-    if (scale >= 1.0) {
-      // Nearest-neighbor for native/zoom-in inspection clarity.
-      for (int y = 0; y < out_h; ++y) {
-        const int vy = vis_y0 + y;
-        int sy = static_cast<int>(std::floor((vy - img_y_) / scale));
-        sy = std::clamp(sy, 0, src_h_ - 1);
-        for (int x = 0; x < out_w; ++x) {
-          const int vx = vis_x0 + x;
-          int sx = static_cast<int>(std::floor((vx - img_x_) / scale));
-          sx = std::clamp(sx, 0, src_w_ - 1);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex_);
+    const GLint filt = (scale < 1.0) ? GL_LINEAR : GL_NEAREST;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glColor3f(1.0f, 1.0f, 1.0f);
 
-          const size_t si =
-              (static_cast<size_t>(sy) * static_cast<size_t>(src_w_) + static_cast<size_t>(sx)) * 3u;
-          const size_t di =
-              (static_cast<size_t>(y) * static_cast<size_t>(out_w) + static_cast<size_t>(x)) * 3u;
-          scaled_view_[di + 0] = src_pixels_[si + 0];
-          scaled_view_[di + 1] = src_pixels_[si + 1];
-          scaled_view_[di + 2] = src_pixels_[si + 2];
-        }
-      }
-    } else {
-      // Bilinear for zoom-out quality.
-      for (int y = 0; y < out_h; ++y) {
-        const int vy = vis_y0 + y;
-        const double src_y = (static_cast<double>(vy - img_y_) + 0.5) / scale - 0.5;
-        int y0 = static_cast<int>(std::floor(src_y));
-        int y1 = y0 + 1;
-        double wy = src_y - static_cast<double>(y0);
-        if (y0 < 0) {
-          y0 = y1 = 0;
-          wy = 0.0;
-        } else if (y1 >= src_h_) {
-          y1 = y0 = src_h_ - 1;
-          wy = 0.0;
-        }
+    const float x0 = static_cast<float>(viewport_x() + img_x_);
+    const float y0 = static_cast<float>(viewport_y() + img_y_);
+    const float x1 = x0 + static_cast<float>(sw);
+    const float y1 = y0 + static_cast<float>(sh);
 
-        for (int x = 0; x < out_w; ++x) {
-          const int vx = vis_x0 + x;
-          const double src_x = (static_cast<double>(vx - img_x_) + 0.5) / scale - 0.5;
-          int x0 = static_cast<int>(std::floor(src_x));
-          int x1 = x0 + 1;
-          double wx = src_x - static_cast<double>(x0);
-          if (x0 < 0) {
-            x0 = x1 = 0;
-            wx = 0.0;
-          } else if (x1 >= src_w_) {
-            x1 = x0 = src_w_ - 1;
-            wx = 0.0;
-          }
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f); glVertex2f(x0, y0);
+    glTexCoord2f(1.0f, 0.0f); glVertex2f(x1, y0);
+    glTexCoord2f(1.0f, 1.0f); glVertex2f(x1, y1);
+    glTexCoord2f(0.0f, 1.0f); glVertex2f(x0, y1);
+    glEnd();
 
-          const size_t p00 = (static_cast<size_t>(y0) * static_cast<size_t>(src_w_) + static_cast<size_t>(x0)) * 3u;
-          const size_t p10 = (static_cast<size_t>(y0) * static_cast<size_t>(src_w_) + static_cast<size_t>(x1)) * 3u;
-          const size_t p01 = (static_cast<size_t>(y1) * static_cast<size_t>(src_w_) + static_cast<size_t>(x0)) * 3u;
-          const size_t p11 = (static_cast<size_t>(y1) * static_cast<size_t>(src_w_) + static_cast<size_t>(x1)) * 3u;
-          const size_t di =
-              (static_cast<size_t>(y) * static_cast<size_t>(out_w) + static_cast<size_t>(x)) * 3u;
-
-          const double w00 = (1.0 - wx) * (1.0 - wy);
-          const double w10 = wx * (1.0 - wy);
-          const double w01 = (1.0 - wx) * wy;
-          const double w11 = wx * wy;
-
-          for (int c = 0; c < 3; ++c) {
-            const double v =
-                src_pixels_[p00 + c] * w00 + src_pixels_[p10 + c] * w10 +
-                src_pixels_[p01 + c] * w01 + src_pixels_[p11 + c] * w11;
-            scaled_view_[di + static_cast<size_t>(c)] =
-                static_cast<unsigned char>(std::clamp(static_cast<int>(std::lround(v)), 0, 255));
-          }
-        }
-      }
-    }
-
-    fl_draw_image(scaled_view_.data(), viewport_x() + vis_x0, viewport_y() + vis_y0, out_w, out_h, 3);
+    glDisable(GL_TEXTURE_2D);
   }
 
   void show_context_menu() {
@@ -1394,10 +1384,11 @@ class ImageView : public Fl_Widget {
   }
 
   void sync_image_pointers() {
+    release_texture();
     src_pixels_ = image_.rgb.data();
     src_w_ = image_.w;
     src_h_ = image_.h;
-    scaled_view_.clear();
+    tex_dirty_ = true;
   }
 
   LoadedImage image_;
@@ -1409,7 +1400,8 @@ class ImageView : public Fl_Widget {
   const unsigned char* src_pixels_ = nullptr;
   int src_w_ = 0;
   int src_h_ = 0;
-  std::vector<unsigned char> scaled_view_;
+  GLuint tex_ = 0;
+  bool tex_dirty_ = true;
   int img_x_ = 0;
   int img_y_ = 0;
   bool dragging_ = false;

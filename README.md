@@ -17,6 +17,7 @@ Runtime/library requirements:
 - FLTK 1.4
 - imlib2
 - libmagic
+- OpenGL-capable graphics stack/driver
 
 Optional runtime tools:
 
@@ -97,6 +98,7 @@ make
 - Loads images via imlib2 (including multiframe/animated files when supported by loader).
 - Opens a resizable FLTK window.
 - Draws the image centered in a frame.
+- Uses a texture-backed OpenGL canvas for image drawing.
 - Scales down to fit the window if needed.
 - Transparency is composited onto a checkerboard background.
 - Animated/multiframe images auto-play using per-frame delays from imlib2 frame info.
@@ -167,4 +169,8 @@ Rendering pipeline:
 - Decoding is done by imlib2.
 - Pixel input from imlib2 is `DATA32` ARGB.
 - `fliv` converts to RGB and composites alpha onto a checkerboard.
+- Image drawing uses an OpenGL texture (`Fl_Gl_Window`).
+- Zoom filter mode is scale-dependent:
+- `>= 100%`: nearest-neighbor
+- `< 100%`: linear filtering
 - Multiframe formats are played with imlib2 frame timing and disposal/blend compositing.
