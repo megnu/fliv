@@ -21,7 +21,12 @@ optdepends=(
 )
 makedepends=('gcc')
 source=("VERSION" "main.cpp" "Makefile" "fliv.desktop" "icon-fliv.png" "config.ini.example")
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+md5sums=('30a04cf33ee91a3ecf4b75c71268f316'
+         'ec2d37c425da947c50b06edd4349ff89'
+         '7a4fb32c6e28e87efc384a7a7451d8f2'
+         '9ac1d7bd6901a9c6163c2b1b48866246'
+         '68691c0ddcb0e12420741f0b1e622c52'
+         '6ebd6ad29894bac36890ed89ae0910f7')
 
 build() {
     make
