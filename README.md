@@ -6,33 +6,58 @@ A simple FLTK 1.4 + imlib2 image viewer.
 
 Build requirements:
 
-- C++17 compiler (`g++` or `clang++`)
+- C++17 compiler
 - `make`
 - `pkg-config`
-- `fltk-config` (`fltk`)
+- `fltk-config`
 
 Runtime/library requirements:
 
-- FLTK 1.4 (`fltk`)
-- imlib2 (`imlib2`)
-- libmagic (`file`)
+- FLTK 1.4
+- imlib2
+- libmagic
 
 Optional runtime tools:
 
-- `wl-copy` (`wl-clipboard`) for copy on Wayland
+- `wl-copy` for copy on Wayland
 - `xclip` for copy on X11
 - `gimp` for Open with GIMP action
 - `inkscape` for Open with Inkscape action
 
-Optional format loader libraries (Arch package names; these are imlib2 optional deps):
+Optional imlib2 format loader libraries:
 
-- `libheif` for HEIF/AVIF
-- `libid3tag` for ID3
-- `libjxl` for JPEG XL (JXL)
-- `librsvg` for SVG
-- `libspectre` for PostScript (PS)
-- `libwebp` for WEBP
-- `openjpeg2` for JPEG 2000 (J2K)
+- libheif for HEIF/AVIF
+- libid3tag for ID3
+- libjxl for JPEG XL (JXL)
+- librsvg for SVG
+- libspectre for PostScript (PS)
+- libwebp for WEBP
+- openjpeg2 for JPEG 2000 (J2K)
+
+## Arch Packages
+
+Required Arch packages:
+
+- `fltk`
+- `imlib2`
+- `file`
+- `make`
+- `pkgconf`
+- C++ compiler toolchain (`gcc` or `clang`)
+
+Optional Arch packages:
+
+- `wl-clipboard` (provides `wl-copy`)
+- `xclip`
+- `gimp`
+- `inkscape`
+- `libheif`
+- `libid3tag`
+- `libjxl`
+- `librsvg`
+- `libspectre`
+- `libwebp`
+- `openjpeg2`
 
 ## Build From Source
 
@@ -71,14 +96,14 @@ make
 - Transparency is composited onto a checkerboard background.
 - Animated/multiframe images auto-play using per-frame delays from imlib2 frame info.
 - Zoom controls:
-- `+` or `=` or `e`: zoom in
-- `-` or `q`: zoom out
+- `+` or `=` or `E`: zoom in
+- `-` or `Q`: zoom out
 - `0`: reset zoom
 - `f`: fit image to window
 - `F11`: toggle fullscreen
 - `Menu` key or `Shift+F10`: open context menu
 - Mouse wheel: zoom in/out
-- Hold `+` / `-` / `q` / `e` for smooth continuous zoom
+- Hold `+` / `-` / `Q` / `E` for smooth continuous zoom
 - `W` / `A` / `S` / `D`: pan up / left / down / right
 - WASD combinations pan diagonally.
 - Left-click drag: pan image by dragging
@@ -96,7 +121,7 @@ make
 - Right-click menu: Copy, Reload, Previous/Next File, Open File, Zoom In/Out/Reset, Fit to Window, Toggle Fullscreen, Open with GIMP, Open with Inkscape.
 - GIMP/Inkscape menu entries are disabled if the app is unavailable at startup.
 - Bottom status bar shows: filename, mime type, human-readable file size, and dimensions.
-- MIME type is detected from file content using `libmagic` (package: `file`).
+- MIME type is detected from file content using `libmagic`.
 
 ## Config file
 
@@ -117,7 +142,7 @@ Supported keys (`[ui]` section):
 
 The runtime loader directory is auto-detected from standard imlib2 loader paths.
 
-`./fliv --list-formats` can reports these image formats:
+`./fliv --list-formats` can report these image formats:
 
 - `ani`, `bmp`, `gif`, `heif`, `ico`, `j2k`, `jpeg`, `jxl`, `lbm`, `png`, `pnm`, `ps`, `qoi`, `svg`, `tga`, `tiff`, `webp`, `xbm`, `xpm`
 
