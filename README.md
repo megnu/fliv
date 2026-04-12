@@ -138,7 +138,6 @@ make
 
 - `fliv` uses Semantic Versioning (`MAJOR.MINOR.PATCH`).
 - The canonical version is stored in `VERSION`.
-- Arch packaging keeps `pkgrel` as a separate package release field.
 - Git release tags use `vX.Y.Z`.
 
 ## Config file
