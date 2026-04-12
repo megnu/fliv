@@ -1,3 +1,5 @@
+SPDX-License-Identifier: GPL-2.0-or-later
+
 fliv is simple FLTK 1.4 + imlib2 image viewer.
 Copyright (C) 2026 jared@megnu.com
 
