@@ -1,5 +1,5 @@
 pkgname=fliv
-pkgver=1.0
+pkgver=$(<VERSION)
 pkgrel=1
 pkgdesc="Simple FLTK image viewer powered by imlib2"
 arch=('x86_64')
@@ -20,8 +20,8 @@ optdepends=(
     'inkscape: open current image with i/Ctrl+I'
 )
 makedepends=('gcc')
-source=("main.cpp" "Makefile" "fliv.desktop" "icon-fliv.png" "config.ini.example")
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+source=("VERSION" "main.cpp" "Makefile" "fliv.desktop" "icon-fliv.png" "config.ini.example")
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 build() {
     make

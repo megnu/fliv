@@ -1,5 +1,5 @@
 CXX := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Wpedantic $(shell fltk-config --cxxflags) $(shell pkg-config --cflags imlib2 libmagic)
+CXXFLAGS := -std=c++17 -Wall -Wextra -Wpedantic -DFLIV_VERSION=\"$(shell cat VERSION)\" $(shell fltk-config --cxxflags) $(shell pkg-config --cflags imlib2 libmagic)
 LDFLAGS := $(shell fltk-config --ldflags) $(shell pkg-config --libs imlib2 libmagic)
 
 TARGET := fliv

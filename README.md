@@ -1,4 +1,5 @@
 # fliv
+![fliv icon](icon-fliv.png)
 
 A simple FLTK 1.4 + imlib2 image viewer.
 
@@ -87,6 +88,10 @@ make
 ./fliv --help
 ```
 
+```bash
+./fliv --version
+```
+
 ## Behavior
 
 - Loads images via imlib2 (including multiframe/animated files when supported by loader).
@@ -123,11 +128,18 @@ make
 - Bottom status bar shows: filename, mime type, human-readable file size, and dimensions.
 - MIME type is detected from file content using `libmagic`.
 
+## Versioning
+
+- `fliv` uses Semantic Versioning (`MAJOR.MINOR.PATCH`).
+- The canonical version is stored in `VERSION`.
+- Arch packaging keeps `pkgrel` as a separate package release field.
+- Git release tags use `vX.Y.Z`.
+
 ## Config file
 
 - Optional default path: `${XDG_CONFIG_HOME:-$HOME/.config}/fliv/config.ini`
 - Optional override path: `--config /path/to/config.ini`
-- Config file is not auto-created; create it manually if you want overrides.
+- Config file is not auto-created. Create it manually if you want overrides.
 - Example config is shipped at `/usr/share/doc/fliv/config.ini.example`.
 
 Supported keys (`[ui]` section):
