@@ -17,7 +17,7 @@ Runtime/library requirements:
 - FLTK 1.4
 - imlib2
 - libmagic
-- OpenGL-capable graphics stack/driver
+- OpenGL 1.1+ compatible graphics stack/driver
 
 Optional runtime tools:
 
