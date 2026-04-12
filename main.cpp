@@ -1467,7 +1467,8 @@ std::vector<std::string> discover_loaders(std::string& loader_dir) {
     loader_dir = dir;
     std::vector<std::string> out;
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
-      if (ec || !entry.is_regular_file()) {
+      std::error_code entry_ec;
+      if (ec || !entry.is_regular_file(entry_ec) || entry_ec) {
         continue;
       }
       const fs::path p = entry.path();
@@ -1641,7 +1642,8 @@ std::vector<std::filesystem::path> list_directory_files(const std::filesystem::p
   std::vector<fs::path> out;
   std::error_code ec;
   for (const auto& entry : fs::directory_iterator(dir, ec)) {
-    if (ec || !entry.is_regular_file()) {
+    std::error_code entry_ec;
+    if (ec || !entry.is_regular_file(entry_ec) || entry_ec) {
       continue;
     }
     out.push_back(entry.path());
