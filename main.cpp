@@ -1450,7 +1450,9 @@ class ImageView : public Fl_Gl_Window {
 
 class AppWindow : public Fl_Double_Window {
  public:
-  AppWindow(int W, int H, const char* L) : Fl_Double_Window(W, H, L) {}
+  AppWindow(int W, int H, const char* L) : Fl_Double_Window(W, H, L) {
+    xclass("fliv");
+  }
 
   void set_layout_widgets(ImageView* view, Fl_Box* status) {
     view_ = view;
