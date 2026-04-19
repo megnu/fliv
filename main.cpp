@@ -735,9 +735,6 @@ class ImageView : public Fl_Gl_Window {
         if (handle_fullscreen_shortcut()) {
           return 1;
         }
-        if (handle_quit_shortcut()) {
-          return 1;
-        }
         if (handle_open_shortcut()) {
           return 1;
         }
@@ -1150,7 +1147,7 @@ class ImageView : public Fl_Gl_Window {
     items[10] = {"Open with GIMP", 'g', nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
     items[11] = {"Open with Inkscape", 'i', nullptr, nullptr,
                  image_flags | inkscape_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
-    items[12] = {"Quit", FL_F + 4, nullptr, nullptr, 0, 0, 0, 0, 0};
+    items[12] = {"Quit", FL_Escape, nullptr, nullptr, 0, 0, 0, 0, 0};
     for (int i = 0; i < 13; ++i) {
       items[i].labelfont(menu_font_);
       items[i].labelsize(menu_font_size_);
@@ -1284,14 +1281,6 @@ class ImageView : public Fl_Gl_Window {
     const int key = Fl::event_key();
     if (key == (FL_F + 11)) {
       if (toggle_fullscreen_cb_) toggle_fullscreen_cb_();
-      return true;
-    }
-    return false;
-  }
-
-  bool handle_quit_shortcut() {
-    if (Fl::event_key() == (FL_F + 4)) {
-      if (quit_cb_) quit_cb_();
       return true;
     }
     return false;
@@ -1892,8 +1881,8 @@ int main(int argc, char** argv) {
   int sh = 0;
   Fl::screen_xywh(sx, sy, sw, sh, 0);
 
-  const int wanted_w = have_initial_image ? (decoded.width() + 2 * kPadding) : 960;
-  const int wanted_h = have_initial_image ? (decoded.height() + 2 * kPadding + kStatusBarH) : 720;
+  const int wanted_w = std::min(960, static_cast<int>(std::lround(static_cast<double>(sw) * 0.66)));
+  const int wanted_h = std::min(720, static_cast<int>(std::lround(static_cast<double>(sh) * 0.66)));
 
   const int win_w = std::clamp(wanted_w, kMinWindowW, static_cast<int>(sw * 0.9));
   const int win_h = std::clamp(wanted_h, kMinWindowH, static_cast<int>(sh * 0.9));
@@ -2029,6 +2018,9 @@ int main(int argc, char** argv) {
   });
   view.set_quit_callback([&]() { win.hide(); });
 
+  const int pos_x = sx + (sw - win_w) / 2;
+  const int pos_y = sy + (sh - win_h) / 2;
+  win.position(pos_x, pos_y);
   win.end();
   win.show();
   Fl::focus(&view);

@@ -112,7 +112,6 @@ make
 - `0`: reset zoom
 - `f`: fit image to window
 - `F11`: toggle fullscreen
-- `F4`: quit
 - `Menu` key or `Shift+F10`: open context menu
 - Mouse wheel: zoom in/out
 - Hold `+` / `-` / `Q` / `E` for smooth continuous zoom

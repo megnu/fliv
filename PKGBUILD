@@ -22,7 +22,7 @@ optdepends=(
 makedepends=('gcc')
 source=("VERSION" "main.cpp" "Makefile" "fliv.desktop" "fliv.png" "config.ini.example")
 md5sums=('375e8a39ec9331ddd89c8acbeb620028'
-         '097fa87b57712665d51c6c78beebd2ec'
+         'eeb5264573b7ecb26ffcf9755205a22b'
          '7a4fb32c6e28e87efc384a7a7451d8f2'
          '9ac1d7bd6901a9c6163c2b1b48866246'
          '68691c0ddcb0e12420741f0b1e622c52'
