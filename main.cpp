@@ -625,6 +625,7 @@ class ImageView : public Fl_Gl_Window {
   void set_open_file_callback(std::function<void()> cb) { open_file_cb_ = std::move(cb); }
   void set_toggle_fullscreen_callback(std::function<void()> cb) { toggle_fullscreen_cb_ = std::move(cb); }
   void set_exit_fullscreen_callback(std::function<bool()> cb) { exit_fullscreen_cb_ = std::move(cb); }
+  void set_quit_callback(std::function<void()> cb) { quit_cb_ = std::move(cb); }
   void set_external_app_availability(bool gimp_available, bool inkscape_available) {
     gimp_available_ = gimp_available;
     inkscape_available_ = inkscape_available;
@@ -732,6 +733,9 @@ class ImageView : public Fl_Gl_Window {
           return 1;
         }
         if (handle_fullscreen_shortcut()) {
+          return 1;
+        }
+        if (handle_quit_shortcut()) {
           return 1;
         }
         if (handle_open_shortcut()) {
@@ -1132,7 +1136,7 @@ class ImageView : public Fl_Gl_Window {
     const int image_flags = has_image_ ? 0 : FL_MENU_INACTIVE;
     const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
     const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
-    Fl_Menu_Item items[13] = {};
+    Fl_Menu_Item items[14] = {};
     items[0] = {"Copy", 'c', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[1] = {"Reload", 'r', nullptr, nullptr, image_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
     items[2] = {"Previous File", 'p', nullptr, nullptr, image_flags, 0, 0, 0, 0};
@@ -1144,8 +1148,10 @@ class ImageView : public Fl_Gl_Window {
     items[8] = {"Fit to Window", 'f', nullptr, nullptr, image_flags, 0, 0, 0, 0};
     items[9] = {"Toggle Fullscreen", FL_F + 11, nullptr, nullptr, FL_MENU_DIVIDER, 0, 0, 0, 0};
     items[10] = {"Open with GIMP", 'g', nullptr, nullptr, image_flags | gimp_flags, 0, 0, 0, 0};
-    items[11] = {"Open with Inkscape", 'i', nullptr, nullptr, image_flags | inkscape_flags, 0, 0, 0, 0};
-    for (int i = 0; i < 12; ++i) {
+    items[11] = {"Open with Inkscape", 'i', nullptr, nullptr,
+                 image_flags | inkscape_flags | FL_MENU_DIVIDER, 0, 0, 0, 0};
+    items[12] = {"Quit", FL_F + 4, nullptr, nullptr, 0, 0, 0, 0, 0};
+    for (int i = 0; i < 13; ++i) {
       items[i].labelfont(menu_font_);
       items[i].labelsize(menu_font_size_);
     }
@@ -1180,6 +1186,8 @@ class ImageView : public Fl_Gl_Window {
       if (open_gimp_cb_) open_gimp_cb_();
     } else if (chosen == &items[11]) {
       if (open_inkscape_cb_) open_inkscape_cb_();
+    } else if (chosen == &items[12]) {
+      if (quit_cb_) quit_cb_();
     }
   }
 
@@ -1276,6 +1284,14 @@ class ImageView : public Fl_Gl_Window {
     const int key = Fl::event_key();
     if (key == (FL_F + 11)) {
       if (toggle_fullscreen_cb_) toggle_fullscreen_cb_();
+      return true;
+    }
+    return false;
+  }
+
+  bool handle_quit_shortcut() {
+    if (Fl::event_key() == (FL_F + 4)) {
+      if (quit_cb_) quit_cb_();
       return true;
     }
     return false;
@@ -1424,6 +1440,7 @@ class ImageView : public Fl_Gl_Window {
   std::function<void()> open_inkscape_cb_;
   std::function<void()> toggle_fullscreen_cb_;
   std::function<bool()> exit_fullscreen_cb_;
+  std::function<void()> quit_cb_;
   bool gimp_available_ = false;
   bool inkscape_available_ = false;
   Fl_Color frame_bg_color_ = fl_rgb_color(kDefaultFrameBgR, kDefaultFrameBgG, kDefaultFrameBgB);
@@ -2008,6 +2025,7 @@ int main(int argc, char** argv) {
     }
     return false;
   });
+  view.set_quit_callback([&]() { win.hide(); });
 
   win.end();
   win.show();

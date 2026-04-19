@@ -112,6 +112,7 @@ make
 - `0`: reset zoom
 - `f`: fit image to window
 - `F11`: toggle fullscreen
+- `F4`: quit
 - `Menu` key or `Shift+F10`: open context menu
 - Mouse wheel: zoom in/out
 - Hold `+` / `-` / `Q` / `E` for smooth continuous zoom
@@ -129,7 +130,7 @@ make
 - `i`: open current image in Inkscape (if installed).
 - `Esc`: exit fullscreen first (if active), otherwise quit.
 - Program can start with no input image: empty state shows an open hint and accepts open shortcut/menu.
-- Right-click menu: Copy, Reload, Previous/Next File, Open File, Zoom In/Out/Reset, Fit to Window, Toggle Fullscreen, Open with GIMP, Open with Inkscape.
+- Right-click menu: Copy, Reload, Previous/Next File, Open File, Zoom In/Out/Reset, Fit to Window, Toggle Fullscreen, Open with GIMP, Open with Inkscape, Quit.
 - GIMP/Inkscape menu entries are disabled if the app is unavailable at startup.
 - Bottom status bar shows: filename, mime type, human-readable file size, and dimensions.
 - MIME type is detected from file content using `libmagic`.
