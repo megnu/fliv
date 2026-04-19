@@ -692,6 +692,7 @@ class ImageView : public Fl_Gl_Window {
       case FL_PUSH:
         take_focus();
         if (Fl::event_button() == FL_RIGHT_MOUSE) {
+          show_context_menu();
           return 1;
         }
         if (Fl::event_button() == FL_LEFT_MOUSE) {
@@ -701,10 +702,6 @@ class ImageView : public Fl_Gl_Window {
         }
         return 1;
       case FL_RELEASE:
-        if (Fl::event_button() == FL_RIGHT_MOUSE) {
-          show_context_menu_at(Fl::event_x_root(), Fl::event_y_root());
-          return 1;
-        }
         if (dragging_ && Fl::event_button() == FL_LEFT_MOUSE) {
           dragging_ = false;
           return 1;
@@ -1132,7 +1129,7 @@ class ImageView : public Fl_Gl_Window {
     glDisable(GL_TEXTURE_2D);
   }
 
-  void show_context_menu_at(int rx, int ry) {
+  void show_context_menu() {
     const int image_flags = has_image_ ? 0 : FL_MENU_INACTIVE;
     const int gimp_flags = gimp_available_ ? 0 : FL_MENU_INACTIVE;
     const int inkscape_flags = inkscape_available_ ? 0 : FL_MENU_INACTIVE;
@@ -1156,13 +1153,7 @@ class ImageView : public Fl_Gl_Window {
       items[i].labelsize(menu_font_size_);
     }
 
-    int lx = rx;
-    int ly = ry;
-    if (auto* win = window()) {
-      lx = rx - win->x();
-      ly = ry - win->y();
-    }
-    Fl_Menu_Button popup_btn(lx, ly, 0, 0);
+    Fl_Menu_Button popup_btn(Fl::event_x(), Fl::event_y(), 0, 0);
     popup_btn.type(Fl_Menu_Button::POPUP3);
     popup_btn.menu(items);
     const Fl_Menu_Item* chosen = popup_btn.popup();
@@ -1201,10 +1192,7 @@ class ImageView : public Fl_Gl_Window {
     const int key = Fl::event_key();
     const bool shift = (Fl::event_state() & FL_SHIFT) != 0;
     if (key == FL_Menu || (shift && key == (FL_F + 10))) {
-      int mx = 0;
-      int my = 0;
-      Fl::get_mouse(mx, my);
-      show_context_menu_at(mx, my);
+      show_context_menu();
       return true;
     }
     return false;
