@@ -1627,15 +1627,30 @@ bool load_ui_config_file(const std::filesystem::path& path, UiConfig& cfg, std::
     unsigned char r = 0, g = 0, b = 0;
     if (key == "frame_bg") {
       if (parse_hex_color(val, r, g, b)) {
-        cfg.frame_bg_r = r; cfg.frame_bg_g = g; cfg.frame_bg_b = b;
+        cfg.frame_bg_r = r;
+        cfg.frame_bg_g = g;
+        cfg.frame_bg_b = b;
+      } else {
+        err_out = "invalid frame_bg color at line " + std::to_string(lineno);
+        return false;
       }
     } else if (key == "status_bg") {
       if (parse_hex_color(val, r, g, b)) {
-        cfg.status_bg_r = r; cfg.status_bg_g = g; cfg.status_bg_b = b;
+        cfg.status_bg_r = r;
+        cfg.status_bg_g = g;
+        cfg.status_bg_b = b;
+      } else {
+        err_out = "invalid status_bg color at line " + std::to_string(lineno);
+        return false;        
       }
     } else if (key == "status_fg") {
       if (parse_hex_color(val, r, g, b)) {
-        cfg.status_fg_r = r; cfg.status_fg_g = g; cfg.status_fg_b = b;
+        cfg.status_fg_r = r;
+        cfg.status_fg_g = g;
+        cfg.status_fg_b = b;
+      } else {
+        err_out = "invalid status_fg color at line " + std::to_string(lineno);
+        return false;        
       }
     } else if (key == "font") {
       cfg.font_name = val;
@@ -1643,6 +1658,9 @@ bool load_ui_config_file(const std::filesystem::path& path, UiConfig& cfg, std::
       int sz = 0;
       if (parse_int_in_range(val, 6, 96, sz)) {
         cfg.font_size = sz;
+      } else {
+        err_out = "invalid font_size at line " + std::to_string(lineno);
+        return false;        
       }
     }
   }
