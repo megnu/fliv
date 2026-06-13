@@ -1671,6 +1671,49 @@ std::string make_title(const std::filesystem::path& file) {
   return "fliv - " + file.filename().string();
 }
 
+bool natural_less(const std::string& a, const std::string& b) {
+  size_t ia = 0;
+  size_t ib = 0;
+  while (ia < a.size() && ib < b.size()) {
+    const unsigned char ca = static_cast<unsigned char>(a[ia]);
+    const unsigned char cb = static_cast<unsigned char>(b[ib]);
+    if (std::isdigit(ca) && std::isdigit(cb)) {
+      size_t za = ia;
+      size_t zb = ib;
+      while (za < a.size() && a[za] == '0') ++za;
+      while (zb < b.size() && b[zb] == '0') ++zb;
+      size_t enda = za;
+      size_t endb = zb;
+      while (enda < a.size() && std::isdigit(static_cast<unsigned char>(a[enda]))) ++enda;
+      while (endb < b.size() && std::isdigit(static_cast<unsigned char>(b[endb]))) ++endb;
+
+      const size_t lena = enda - za;
+      const size_t lenb = endb - zb;
+      if (lena != lenb) {
+        return lena < lenb;
+      }
+      const int cmp = a.compare(za, lena, b, zb, lenb);
+      if (cmp != 0) {
+        return cmp < 0;
+      }
+      const size_t zeros_a = za - ia;
+      const size_t zeros_b = zb - ib;
+      if (zeros_a != zeros_b) {
+        return zeros_a < zeros_b;
+      }
+      ia = enda;
+      ib = endb;
+      continue;
+    }
+    if (ca != cb) {
+      return ca < cb;
+    }
+    ++ia;
+    ++ib;
+  }
+  return a.size() < b.size();
+}
+
 std::vector<std::filesystem::path> list_directory_files(const std::filesystem::path& dir) {
   namespace fs = std::filesystem;
   std::vector<fs::path> out;
@@ -1683,9 +1726,20 @@ std::vector<std::filesystem::path> list_directory_files(const std::filesystem::p
     out.push_back(entry.path());
   }
   std::sort(out.begin(), out.end(), [](const fs::path& a, const fs::path& b) {
-    return a.filename().string() < b.filename().string();
+    return natural_less(a.filename().string(), b.filename().string());
   });
   return out;
+}
+
+size_t index_of_path(const std::vector<std::filesystem::path>& files, const std::filesystem::path& target) {
+  namespace fs = std::filesystem;
+  const fs::path abs_target = fs::absolute(target).lexically_normal();
+  for (size_t i = 0; i < files.size(); ++i) {
+    if (fs::absolute(files[i]).lexically_normal() == abs_target) {
+      return i;
+    }
+  }
+  return 0;
 }
 
 std::string shell_quote(const std::string& s) {
@@ -1884,12 +1938,7 @@ int main(int argc, char** argv) {
     current_meta.width = decoded.width();
     current_meta.height = decoded.height();
     dir_files = list_directory_files(current_dir);
-    for (size_t i = 0; i < dir_files.size(); ++i) {
-      if (fs::absolute(dir_files[i]).lexically_normal() == current_file) {
-        current_index = i;
-        break;
-      }
-    }
+    current_index = index_of_path(dir_files, current_file);
     have_initial_image = true;
   }
  
@@ -1961,13 +2010,7 @@ int main(int argc, char** argv) {
     if (refresh_dir) {
       current_dir = current_file.parent_path();
       dir_files = list_directory_files(current_dir);
-      current_index = 0;
-      for (size_t i = 0; i < dir_files.size(); ++i) {
-        if (fs::absolute(dir_files[i]).lexically_normal() == current_file) {
-          current_index = i;
-          break;
-        }
-      }
+      current_index = index_of_path(dir_files, current_file);
     }
     win.copy_label(make_title(current_file).c_str());
     status.copy_label(make_status_text(current_meta).c_str());
