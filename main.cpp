@@ -114,6 +114,12 @@ struct FileMetadata {
   int height = 0;
 };
 
+struct ViewState {
+  double zoom = 1.0;
+  int img_x = 0;
+  int img_y = 0;
+};
+
 struct UiConfig {
   unsigned char frame_bg_r = kDefaultFrameBgR;
   unsigned char frame_bg_g = kDefaultFrameBgG;
@@ -134,6 +140,12 @@ struct CliOptions {
   bool list_formats = false;
   std::optional<std::filesystem::path> image_file;
   std::optional<std::filesystem::path> config_file;
+};
+
+enum class LoadReason {
+  Navigate,
+  Reload,
+  OpenFile,
 };
 
 std::string trim(std::string s) {
@@ -667,6 +679,19 @@ class ImageView : public Fl_Gl_Window {
   }
 
   bool has_image() const { return has_image_; }
+
+  ViewState view_state() const {
+    return ViewState{current_scale(), img_x_, img_y_};
+  }
+
+  void restore_view_state(const ViewState& state) {
+    if (!has_image_) return;
+    zoom_ = std::clamp(state.zoom, kZoomMin, kZoomMax);
+    img_x_ = state.img_x;
+    img_y_ = state.img_y;
+    clamp_offsets();
+    redraw();
+  }
 
   void clear_image() {
     stop_animation();
@@ -1980,6 +2005,16 @@ int main(int argc, char** argv) {
   win.resizable(&view);
   view.set_external_app_availability(command_exists("gimp"), command_exists("inkscape"));
 
+  std::unordered_map<std::string, ViewState> view_memory;
+  auto view_memory_key = [](const fs::path& file) {
+    return fs::absolute(file).lexically_normal().string();
+  };
+  auto remember_current_view = [&]() {
+    if (!current_file.empty() && view.has_image()) {
+      view_memory[view_memory_key(current_file)] = view.view_state();
+    }
+  };
+
   auto apply_decoded_to_view = [&](DecodedImage&& media) {
     if (media.animated) {
       view.set_animation(std::move(media.anim), std::move(media.frame));
@@ -1994,27 +2029,35 @@ int main(int argc, char** argv) {
     apply_decoded_to_view(std::move(decoded));
   }
 
-  auto load_and_apply = [&](const fs::path& file_to_open, bool refresh_dir) -> bool {
+  auto load_and_apply = [&](const fs::path& file_to_open, LoadReason reason) -> bool {
     DecodedImage next;
     std::string err;
     const fs::path abs = fs::absolute(file_to_open).lexically_normal();
+    const fs::path old_dir = current_dir;
+    const fs::path next_dir = abs.parent_path();
     if (!load_image_decoded(abs.string().c_str(), next, err)) {
       std::fprintf(stderr, "Failed to load image: %s (%s)\n", abs.string().c_str(), err.c_str());
       return false;
+    }
+
+    remember_current_view();
+    if (reason == LoadReason::OpenFile && next_dir != old_dir) {
+      view_memory.clear();
     }
 
     current_file = abs;
     current_meta = build_file_metadata(current_file);
     current_meta.width = next.width();
     current_meta.height = next.height();
-    if (refresh_dir) {
-      current_dir = current_file.parent_path();
-      dir_files = list_directory_files(current_dir);
-      current_index = index_of_path(dir_files, current_file);
-    }
+    current_dir = next_dir;
+    dir_files = list_directory_files(current_dir);
+    current_index = index_of_path(dir_files, current_file);
     win.copy_label(make_title(current_file).c_str());
     status.copy_label(make_status_text(current_meta).c_str());
     apply_decoded_to_view(std::move(next));
+    if (auto it = view_memory.find(view_memory_key(current_file)); it != view_memory.end()) {
+      view.restore_view_state(it->second);
+    }
     return true;
   };
 
@@ -2031,7 +2074,7 @@ int main(int argc, char** argv) {
     for (int tried = 0; tried < n - 1; ++tried) {
       i = (i + step + n) % n;
       const std::string candidate = dir_files[static_cast<size_t>(i)].string();
-      if (load_and_apply(candidate, true)) {
+      if (load_and_apply(candidate, LoadReason::Navigate)) {
         return true;
       }
     }
@@ -2048,12 +2091,12 @@ int main(int argc, char** argv) {
   });
   view.set_reload_callback([&]() {
     if (current_file.empty()) return;
-    (void)load_and_apply(current_file, true);
+    (void)load_and_apply(current_file, LoadReason::Reload);
   });
   view.set_open_file_callback([&]() {
     fs::path selected;
     if (pick_image_file(selected, current_dir)) {
-      (void)load_and_apply(selected, true);
+      (void)load_and_apply(selected, LoadReason::OpenFile);
     }
   });
   view.set_open_gimp_callback([&]() {

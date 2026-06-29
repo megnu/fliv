@@ -101,7 +101,6 @@ make
 
 - Loads images via imlib2 (including multiframe/animated files when supported by loader).
 - Opens a resizable FLTK window.
-- Draws the image centered in a frame.
 - Uses a texture-backed OpenGL canvas for image drawing.
 - Scales down to fit the window if needed.
 - Transparency is composited onto a checkerboard background.
@@ -120,6 +119,7 @@ make
 - Left-click drag: pan image by dragging
 - Pan is edge-restricted (no movement past image bounds).
 - Zoom rendering is viewport-based (only visible pixels are sampled/rendered).
+- Pan position and Zoom state persist while in current directory.
 - `p` / `n` or `Left` / `Right`: previous/next decodable file in the current directory.
 - Unsupported/unreadable files are skipped automatically.
 - `r`: reload current image from disk.
